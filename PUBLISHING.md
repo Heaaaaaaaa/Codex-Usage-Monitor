@@ -55,13 +55,13 @@ Audit the full development history separately:
 make audit-public-history
 ```
 
-That history audit is expected to reject this development repository. Before creating the public GitHub repository, choose a public or GitHub no-reply commit email and choose a license. Then generate a clean source snapshot:
+That history audit is expected to reject this development repository. The public MIT-licensed repository is [Heaaaaaaaa/Codex-Usage-Monitor](https://github.com/Heaaaaaaaa/Codex-Usage-Monitor), seeded without the development history. Generate a clean tracked snapshot for public updates with:
 
 ```bash
 make source-archive
 ```
 
-This creates `CodexUsageMonitor-0.4.1-source.zip` and its SHA-256 file from tracked `HEAD` only. Use that snapshot to seed a new public repository with one clean root commit. Run `make audit-public-history` in the new repository and require it to pass before adding or pushing a public remote. The source validator rejects tracked credentials, private keys, raw JSONL/log files, generated build directories, current-user absolute home paths, unsafe ZIP paths, and symbolic links.
+This creates `CodexUsageMonitor-0.4.1-source.zip` and its SHA-256 file from tracked `HEAD` only. Apply that snapshot to a clean clone of the public repository, preserve its existing `.git` directory and `LICENSE`, and commit with the configured GitHub no-reply identity. Run `make audit-public-history` in the public clone and require it to pass before every push. The source validator rejects tracked credentials, private keys, raw JSONL/log files, generated build directories, current-user absolute home paths, unsafe ZIP paths, and symbolic links.
 
 ## Public Release
 

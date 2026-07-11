@@ -53,6 +53,16 @@ def test_public_bundle_identifier_validation() -> None:
     require(public_bundle_identifier_error("com.example.codex usage") is not None, "invalid characters rejected")
 
 
+def test_menu_bar_bundle_metadata() -> None:
+    repo = Path(__file__).resolve().parent.parent
+    with (repo / "Info.plist").open("rb") as handle:
+        info = plistlib.load(handle)
+    makefile = (repo / "Makefile").read_text(encoding="utf-8")
+
+    require(info.get("LSUIElement") is True, "menu-bar app must be an LSUIElement agent")
+    require("Print :LSUIElement" in makefile, "release verification must enforce LSUIElement")
+
+
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
     version, build, errors = release_version_errors(repo, "v0.4.1")
@@ -281,6 +291,7 @@ def main() -> int:
     tests = [
         ("Developer ID identity validation", test_developer_id_identity_validation),
         ("public bundle identifier validation", test_public_bundle_identifier_validation),
+        ("menu bar bundle metadata", test_menu_bar_bundle_metadata),
         ("release version validation", test_release_version_validation),
         ("notary keychain command", test_notary_keychain_command),
         ("publish workflow safeguards", test_publish_workflow_safeguards),

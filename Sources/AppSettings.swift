@@ -9,6 +9,14 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var displayTitle: String {
+        switch self {
+        case .tokens: return "Tokens"
+        case .cost: return "Estimated Cost"
+        case .tokensAndCost: return "Tokens + Est. Cost"
+        }
+    }
+
     var detail: String {
         switch self {
         case .tokens:
@@ -26,6 +34,13 @@ enum TrendMetric: String, CaseIterable, Identifiable {
     case cost = "Cost"
 
     var id: String { rawValue }
+
+    var displayTitle: String {
+        switch self {
+        case .tokens: return "Tokens"
+        case .cost: return "Est. Cost"
+        }
+    }
 }
 
 enum AutoRefreshInterval: String, CaseIterable, Identifiable {
@@ -354,7 +369,7 @@ final class AppSettings: ObservableObject {
 
         let costBudget = costBudgetStatus(summary: summary)
         if costBudget.isConfigured {
-            lines.append("Cost budget: \(costBudget.value) - \(costBudget.detail)")
+            lines.append("Estimated cost budget: \(costBudget.value) - \(costBudget.detail)")
         }
 
         let alert = budgetAlert(summary: summary)
@@ -458,12 +473,12 @@ final class AppSettings: ObservableObject {
 
     func costBudgetStatus(summary: UsageSummary) -> BudgetStatus {
         guard costBudgetLimit > 0 else {
-            return BudgetStatus(title: "Cost budget", value: "Off", detail: "Not set", fraction: 0, isConfigured: false, isExceeded: false)
+            return BudgetStatus(title: "Estimated cost budget", value: "Off", detail: "Not set", fraction: 0, isConfigured: false, isExceeded: false)
         }
 
         let rawFraction = summary.cost / costBudgetLimit
         return BudgetStatus(
-            title: "Cost budget",
+            title: "Estimated cost budget",
             value: Self.percentText(rawFraction),
             detail: "\(UsageStore.currency(summary.cost)) of \(UsageStore.currency(costBudgetLimit))",
             fraction: Self.clampedFraction(rawFraction),

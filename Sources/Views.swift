@@ -267,10 +267,11 @@ struct RootView: View {
                 )
                 Divider().background(AppColor.border)
                 PrimaryFigure(
-                    title: "Cost",
+                    title: "Est. cost",
                     value: UsageStore.currency(store.summary.cost),
                     caption: costCaption
                 )
+                .help("\(UsageStore.defaultRateSourceSummary). \(UsageStore.defaultRateLimitations)")
             }
 
             if store.comparison.isVisible {
@@ -446,7 +447,7 @@ struct RootView: View {
         Panel {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    SectionTitle("Cost Mix")
+                    SectionTitle("Estimated Cost Mix")
                     Spacer()
                     Text(UsageStore.currency(store.summary.cost))
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -681,7 +682,7 @@ struct RootView: View {
                         appSettings.setMenuBarDisplayMode(newValue)
                     })) {
                         ForEach(MenuBarDisplayMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
+                            Text(mode.displayTitle).tag(mode)
                         }
                     }
                     .labelsHidden()
@@ -941,7 +942,7 @@ struct RootView: View {
 
                 BudgetInputRow(
                     symbol: "dollarsign",
-                    title: "Cost budget",
+                    title: "Estimated cost budget",
                     detail: appSettings.costBudgetStatus(summary: store.summary).detail,
                     color: AppColor.green
                 ) {
@@ -959,7 +960,7 @@ struct RootView: View {
                     .frame(width: 96)
                     .background(AppColor.control)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .accessibilityLabel("Cost budget")
+                    .accessibilityLabel("Estimated cost budget")
                 }
             }
         }
@@ -1172,9 +1173,9 @@ struct RootView: View {
 
     private var costCaption: String {
         guard store.pricingCoverage.observedTokens > 0 else {
-            return "No logged tokens"
+            return "API estimate / no tokens"
         }
-        return "\(store.pricingCoverage.percentText) of tokens priced"
+        return "API estimate / \(store.pricingCoverage.percentText) priced"
     }
 
     private var unpricedTitle: String {
@@ -1429,7 +1430,7 @@ private struct ComparisonStrip: View {
             )
 
             ComparisonMetric(
-                title: "Cost",
+                title: "Est. cost",
                 value: UsageStore.signedCurrency(comparison.costDelta),
                 detail: UsageStore.signedPercent(comparison.costDeltaPercent),
                 color: comparison.costDelta >= 0 ? AppColor.gold : AppColor.green
@@ -1560,7 +1561,7 @@ private struct TrendPanel: View {
                     Spacer()
                     Picker("Trend metric", selection: $metric) {
                         ForEach(TrendMetric.allCases) { value in
-                            Text(value.rawValue).tag(value)
+                            Text(value.displayTitle).tag(value)
                         }
                     }
                     .pickerStyle(.segmented)

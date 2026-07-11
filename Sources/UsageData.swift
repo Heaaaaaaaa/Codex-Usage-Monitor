@@ -1542,7 +1542,7 @@ final class UsageStore: ObservableObject {
         var currentProject = ""
         var currentModel = "unknown"
         var previousTotal: UsageTokens?
-        var fallbackUsages = Set<UsageTokens>()
+        var previousFallbackUsage: UsageTokens?
         var entries: [UsageEntry] = []
         var latestLimit: RateLimitSnapshot?
         var parseIssueCount = 0
@@ -1619,24 +1619,27 @@ final class UsageStore: ObservableObject {
             if let totalDict = info["total_token_usage"] as? [String: Any] {
                 let total = tokens(from: totalDict)
                 if total.total > 0 {
+                    let usage: UsageTokens
                     if let previousTotal {
-                        let delta = total - previousTotal
-                        if delta.total > 0 {
-                            entries.append(makeEntry(timestamp: timestamp, sessionID: sessionID, chatTitle: chatTitle, project: currentProject, model: currentModel, tokens: delta, file: url, line: lineNumber))
-                        }
+                        usage = total.total < previousTotal.total ? total : total - previousTotal
                     } else {
-                        entries.append(makeEntry(timestamp: timestamp, sessionID: sessionID, chatTitle: chatTitle, project: currentProject, model: currentModel, tokens: total, file: url, line: lineNumber))
+                        usage = total
+                    }
+                    if usage.total > 0 {
+                        entries.append(makeEntry(timestamp: timestamp, sessionID: sessionID, chatTitle: chatTitle, project: currentProject, model: currentModel, tokens: usage, file: url, line: lineNumber))
                     }
                     previousTotal = total
+                    previousFallbackUsage = nil
                     return
                 }
             }
 
             if let lastDict = info["last_token_usage"] as? [String: Any] {
                 let fallback = tokens(from: lastDict)
-                if fallback.total > 0 && fallbackUsages.insert(fallback).inserted {
+                if fallback.total > 0 && fallback != previousFallbackUsage {
                     entries.append(makeEntry(timestamp: timestamp, sessionID: sessionID, chatTitle: chatTitle, project: currentProject, model: currentModel, tokens: fallback, file: url, line: lineNumber))
                 }
+                previousFallbackUsage = fallback
             }
         }
 
@@ -1665,11 +1668,29 @@ final class UsageStore: ObservableObject {
         var lineNumber = 0
         var issueCount = 0
         var latestIssue: String?
+        var discardingOversizedLine = false
         let newline = Data([10])
 
         func recordLineIssue(_ message: String) {
             issueCount += 1
             latestIssue = "line \(lineNumber + 1) \(message)"
+        }
+
+        func processLine(_ lineData: Data) {
+            defer { lineNumber += 1 }
+            guard shouldDecodeLine(lineData) else {
+                return
+            }
+            guard lineData.count <= Self.maximumLogLineBytes else {
+                recordLineIssue("exceeds the 8 MB safety limit")
+                return
+            }
+            let dataForString = lineData.range(of: Self.tokenCountMarker) == nil ? lineData.prefix(8192) : lineData[...]
+            if let line = String(data: Data(dataForString), encoding: .utf8) {
+                body(line, lineNumber)
+            } else {
+                recordLineIssue("is not valid UTF-8")
+            }
         }
 
         while true {
@@ -1689,27 +1710,25 @@ final class UsageStore: ObservableObject {
             while let range = buffer.range(of: newline) {
                 let lineData = buffer.subdata(in: buffer.startIndex..<range.lowerBound)
                 buffer.removeSubrange(buffer.startIndex..<range.upperBound)
-                guard shouldDecodeLine(lineData) else {
+                if discardingOversizedLine {
+                    discardingOversizedLine = false
                     lineNumber += 1
                     continue
                 }
-                let dataForString = lineData.range(of: Self.tokenCountMarker) == nil ? lineData.prefix(8192) : lineData[...]
-                if let line = String(data: Data(dataForString), encoding: .utf8) {
-                    body(line, lineNumber)
-                } else {
-                    recordLineIssue("is not valid UTF-8")
+                processLine(lineData)
+            }
+
+            if buffer.count > Self.maximumLogLineBytes {
+                if !discardingOversizedLine && shouldDecodeLine(buffer) {
+                    recordLineIssue("exceeds the 8 MB safety limit")
                 }
-                lineNumber += 1
+                buffer.removeAll(keepingCapacity: true)
+                discardingOversizedLine = true
             }
         }
 
-        if !buffer.isEmpty, shouldDecodeLine(buffer) {
-            let dataForString = buffer.range(of: Self.tokenCountMarker) == nil ? buffer.prefix(8192) : buffer[...]
-            if let line = String(data: Data(dataForString), encoding: .utf8) {
-                body(line, lineNumber)
-            } else {
-                recordLineIssue("is not valid UTF-8")
-            }
+        if !buffer.isEmpty, !discardingOversizedLine {
+            processLine(buffer)
         }
 
         return LineReadDiagnostics(issueCount: issueCount, latestIssue: latestIssue)
@@ -2247,7 +2266,7 @@ final class UsageStore: ObservableObject {
     static let defaultRateSourceName = "OpenAI API pricing"
     static let defaultRateSourceURL = URL(string: "https://developers.openai.com/api/docs/pricing")!
     static let defaultRateVerifiedDate = "2026-07-10"
-    static let defaultRateLimitations = "Local logs do not expose cache writes or tool-call charges; long-context, processing-mode, regional, and subscription pricing can differ."
+    static let defaultRateLimitations = "Local logs do not expose cache writes or tool-call charges; total-only rows use the input rate; long-context, processing-mode, regional, and subscription pricing can differ."
     static let defaultRateSourceSummary = "\(defaultRateProfileName), verified \(defaultRateVerifiedDate)"
     static let defaultRateSourceDetail = "\(defaultRateSourceName) / \(defaultRateVerifiedDate)"
 
@@ -2409,6 +2428,7 @@ final class UsageStore: ObservableObject {
     private static let sessionMetaMarker = Data(#""type":"session_meta""#.utf8)
     private static let turnContextMarker = Data(#""type":"turn_context""#.utf8)
     private static let tokenCountMarker = Data(#""type":"token_count""#.utf8)
+    private static let maximumLogLineBytes = 8 * 1024 * 1024
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()

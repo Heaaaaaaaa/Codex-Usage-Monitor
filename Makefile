@@ -238,6 +238,7 @@ verify-app: all
 	test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$(APP)/Contents/Info.plist")" = "$(VERSION)"
 	test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$(APP)/Contents/Info.plist")" = "$(BUILD_NUMBER)"
 	test "$$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$(APP)/Contents/Info.plist")" = "$(MINIMUM_MACOS)"
+	test "$$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$(APP)/Contents/Info.plist")" = "true"
 	plutil -lint "$(APP)/Contents/Info.plist" "$(PRIVACY_MANIFEST)"
 	plutil -lint "$(ENTITLEMENTS)"
 	test -f "$(APP)/Contents/Resources/AppIcon.icns"

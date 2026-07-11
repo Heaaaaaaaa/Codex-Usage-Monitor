@@ -890,6 +890,7 @@ private func testDefaultRateSourceAndReset() throws {
     try require(UsageStore.defaultRateSourceSummary.contains("2026-07-10"), "default rate source date")
     try requireEqual(UsageStore.defaultRateSourceURL.absoluteString, "https://developers.openai.com/api/docs/pricing", "default rate source URL")
     try require(UsageStore.defaultRateLimitations.contains("cache writes"), "default rate limitations disclose missing cache writes")
+    try require(UsageStore.defaultRateLimitations.contains("total-only rows use the input rate"), "default rate limitations disclose total-only estimate basis")
     try requireEqual(UsageStore.defaultRates.first?.model, "gpt-5.6-sol", "latest default model is first")
     try requireApprox(UsageStore.defaultRates.first?.inputPerMillion ?? -1, 5.0, "GPT-5.6 Sol input rate")
     try requireApprox(UsageStore.defaultRates.first?.cachedInputPerMillion ?? -1, 0.5, "GPT-5.6 Sol cached rate")
@@ -1417,7 +1418,7 @@ private func testStatusMenuSnapshotLines() throws {
     try require(lines.contains("Pricing coverage: 100%"), "status menu pricing coverage line")
     try require(lines.contains("Events: 2 / Chats: 1"), "status menu count line")
     try require(lines.contains("Token budget: 50% - 1.8K of 3.6K tokens"), "status menu token budget line")
-    try require(lines.contains("Cost budget: 1% - $0.01 of $1.00"), "status menu cost budget line")
+    try require(lines.contains("Estimated cost budget: 1% - $0.01 of $1.00"), "status menu cost budget line")
     try requireEqual(lines.last, "Status: Ready", "status menu health line")
 
     settings.setTokenBudgetLimit(1_000)
@@ -1607,6 +1608,95 @@ private func testParseDiagnosticsReportMalformedTokenLines() throws {
     try requireEqual(cachedStore.scanDiagnostics.cachedFileCount, 1, "malformed parser cached file count")
     try requireEqual(cachedStore.scanDiagnostics.parseIssueCount, 1, "malformed parser cached parse issue count")
     try requireEqual(cachedStore.healthStatus.title, "Some log lines were skipped", "malformed parser cached health title")
+}
+
+private func testParserHandlesCounterResetsAndFallbackRepeats() throws {
+    let codexHome = try makeTemporaryCodexHome()
+    let cacheURL = try makeTemporaryCacheURL()
+    defer {
+        try? FileManager.default.removeItem(at: codexHome)
+        try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent())
+    }
+
+    let sessionID = "019parser-reset-session"
+    try writeJSONL(codexHome.appendingPathComponent("session_index.jsonl"), [
+        ["id": sessionID, "thread_name": "Counter reset fixture"]
+    ])
+
+    let fallbackA = tokenUsage(input: 30, cached: 0, output: 10, reasoning: 0, total: 40)
+    let fallbackB = tokenUsage(input: 20, cached: 0, output: 5, reasoning: 0, total: 25)
+    let sessionFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(sessionID).jsonl")
+    try writeJSONL(sessionFile, [
+        [
+            "type": "session_meta",
+            "session_id": sessionID,
+            "cwd": "/tmp/Counter Reset Project",
+            "model": "gpt-5.6-luna"
+        ],
+        tokenEvent(timestamp: isoString(daysAgo: 1), info: [
+            "total_token_usage": tokenUsage(input: 80, cached: 0, output: 20, reasoning: 0, total: 100)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 1), info: [
+            "total_token_usage": tokenUsage(input: 10, cached: 0, output: 10, reasoning: 0, total: 20)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 2), info: [
+            "total_token_usage": tokenUsage(input: 30, cached: 0, output: 20, reasoning: 0, total: 50)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 3), info: ["last_token_usage": fallbackA]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 4), info: ["last_token_usage": fallbackA]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 5), info: ["last_token_usage": fallbackB]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 6), info: ["last_token_usage": fallbackA])
+    ])
+
+    let store = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
+    store.dateWindow = .sevenDays
+    store.loadFromDiskSynchronously()
+
+    try requireEqual(store.summary.eventCount, 6, "counter reset and fallback event count")
+    try requireEqual(store.summary.tokens.input, 190, "counter reset and fallback input total")
+    try requireEqual(store.summary.tokens.output, 65, "counter reset and fallback output total")
+    try requireEqual(store.summary.tokens.total, 255, "counter reset and fallback total")
+}
+
+private func testParserBoundsOversizedRelevantLines() throws {
+    let codexHome = try makeTemporaryCodexHome()
+    let cacheURL = try makeTemporaryCacheURL()
+    defer {
+        try? FileManager.default.removeItem(at: codexHome)
+        try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent())
+    }
+
+    let sessionID = "019parser-oversized-session"
+    try writeJSONL(codexHome.appendingPathComponent("session_index.jsonl"), [
+        ["id": sessionID, "thread_name": "Oversized line fixture"]
+    ])
+
+    let sessionMeta = try jsonLine([
+        "type": "session_meta",
+        "session_id": sessionID,
+        "cwd": "/tmp/Oversized Line Project",
+        "model": "gpt-5.5"
+    ])
+    let oversizedTokenLine = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"padding\":\"" + String(repeating: "x", count: 8 * 1024 * 1024) + "\"}}"
+    let validTokenLine = try jsonLine(tokenEvent(
+        timestamp: isoString(daysAgo: 1),
+        info: [
+            "total_token_usage": tokenUsage(input: 400, cached: 100, output: 40, reasoning: 5, total: 440)
+        ]
+    ))
+
+    let sessionFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(sessionID).jsonl")
+    try FileManager.default.createDirectory(at: sessionFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "\(sessionMeta)\n\(oversizedTokenLine)\n\(validTokenLine)\n".write(to: sessionFile, atomically: true, encoding: .utf8)
+
+    let store = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
+    store.dateWindow = .sevenDays
+    store.loadFromDiskSynchronously()
+
+    try requireEqual(store.summary.eventCount, 1, "oversized parser keeps following valid event")
+    try requireEqual(store.summary.tokens.total, 440, "oversized parser valid token total")
+    try requireEqual(store.scanDiagnostics.parseIssueCount, 1, "oversized parser issue count")
+    try require(store.scanDiagnostics.latestParseIssue?.contains("8 MB safety limit") == true, "oversized parser issue detail")
 }
 
 private func testCodexJSONLParsing() throws {
@@ -1816,6 +1906,8 @@ private struct RunTests {
             ("diagnostic report", testDiagnosticReportIncludesSupportContext),
             ("parse cache", testParseCacheReusesAndInvalidatesFiles),
             ("parse diagnostics", testParseDiagnosticsReportMalformedTokenLines),
+            ("counter reset and fallback parsing", testParserHandlesCounterResetsAndFallbackRepeats),
+            ("oversized log line bounds", testParserBoundsOversizedRelevantLines),
             ("Codex JSONL parsing", testCodexJSONLParsing),
             ("long-running session parsing", testLongRunningSessionIncludesRecentEvents),
             ("extreme numeric log values", testExtremeNumericLogValuesAreContained),

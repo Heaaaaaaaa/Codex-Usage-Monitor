@@ -234,8 +234,8 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         let item = NSMenuItem(title: "Menu Bar Shows", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.addItem(NSMenuItem(title: "Tokens", action: #selector(showTokensInMenuBar), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Cost", action: #selector(showCostInMenuBar), keyEquivalent: ""))
-        submenu.addItem(NSMenuItem(title: "Tokens + Cost", action: #selector(showTokensAndCostInMenuBar), keyEquivalent: ""))
+        submenu.addItem(NSMenuItem(title: "Estimated Cost", action: #selector(showCostInMenuBar), keyEquivalent: ""))
+        submenu.addItem(NSMenuItem(title: "Tokens + Est. Cost", action: #selector(showTokensAndCostInMenuBar), keyEquivalent: ""))
         submenu.items.forEach { $0.target = self }
         item.submenu = submenu
         return item
@@ -561,7 +561,7 @@ private final class BudgetNotificationController: NSObject, UNUserNotificationCe
 
     private func post(_ alert: BudgetAlert, center: UNUserNotificationCenter) {
         let content = UNMutableNotificationContent()
-        content.title = alert.level == .exceeded ? "Codex budget exceeded" : "Codex budget near limit"
+        content.title = alert.level == .exceeded ? "Codex usage budget exceeded" : "Codex usage budget near limit"
         content.body = alert.detail
         content.sound = .default
         content.threadIdentifier = "codex-usage-budget"

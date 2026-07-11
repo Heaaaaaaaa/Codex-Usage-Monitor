@@ -2,6 +2,11 @@
 
 ## 0.4.1 - 2026-07-11
 
+- Declared the app as an `LSUIElement` agent so it launches directly as a menu-bar utility without a transient Dock presence.
+- Counted the first usage snapshot after a cumulative token-counter reset instead of silently dropping that segment.
+- Limited fallback deduplication to consecutive duplicate snapshots so later legitimate turns with the same token shape remain counted.
+- Bounded relevant JSONL lines at 8 MB and continued scanning later events after an oversized malformed line.
+- Labeled dollar figures and budgets more explicitly as API-rate estimates, including the input-rate assumption for total-only legacy rows.
 - Expired rate-limit windows and reset credits now stop presenting stale availability, with minute-by-minute countdown refreshes while the dashboard is visible.
 - Hardened numeric log parsing against non-finite, out-of-range, and negative values so malformed local events cannot crash or corrupt usage totals.
 - Redacted custom folder paths and selected project/chat labels from copied diagnostics, and documented the remaining clipboard contents in the privacy policy.
