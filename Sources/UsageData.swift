@@ -325,6 +325,7 @@ enum ScopeMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+@MainActor
 final class UsageStore: ObservableObject {
     @Published var entries: [UsageEntry] = []
     @Published var dateWindow: DateWindow = .sevenDays
@@ -394,7 +395,7 @@ final class UsageStore: ObservableObject {
         let sourceRevision = dataSourceRevision
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let parsed = self.loadLocalUsage(scanDays: scanDays, source: source)
+            let parsed = Self.loadLocalUsage(scanDays: scanDays, source: source)
             DispatchQueue.main.async {
                 let sourceIsCurrent = Self.shouldApplyScanResult(
                     requestedRevision: sourceRevision,
@@ -463,7 +464,7 @@ final class UsageStore: ObservableObject {
     }
 
     func loadFromDiskSynchronously() {
-        let parsed = loadLocalUsage(scanDays: dateWindow.historyDays, source: makeScanSource())
+        let parsed = Self.loadLocalUsage(scanDays: dateWindow.historyDays, source: makeScanSource())
         applyParsedUsage(parsed, scanDays: dateWindow.historyDays)
     }
 
@@ -803,7 +804,7 @@ final class UsageStore: ObservableObject {
             .sorted { $0.timestamp < $1.timestamp }
             .map { entry in
                 [
-                    Self.csvEscape(Self.isoFormatter.string(from: entry.timestamp)),
+                    Self.csvEscape(entry.timestamp.formatted(Self.fractionalISOFormatStyle)),
                     Self.csvEscape(entry.projectPath),
                     Self.csvEscape(entry.chatTitle),
                     Self.csvEscape(entry.model),
@@ -1302,7 +1303,7 @@ final class UsageStore: ObservableObject {
         recompute()
     }
 
-    private func loadLocalUsage(scanDays: Int?, source: UsageScanSource) -> LocalUsageParseResult {
+    nonisolated private static func loadLocalUsage(scanDays: Int?, source: UsageScanSource) -> LocalUsageParseResult {
         let index = loadSessionIndex(codexHome: source.codexHome)
         let loadedCache = loadParseCache(
             indexSignature: sessionIndexSignature(codexHome: source.codexHome),
@@ -1364,7 +1365,7 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    private func loadSessionIndex(codexHome: URL) -> [String: String] {
+    nonisolated private static func loadSessionIndex(codexHome: URL) -> [String: String] {
         let indexURL = codexHome.appendingPathComponent("session_index.jsonl")
         guard let content = try? String(contentsOf: indexURL, encoding: .utf8) else {
             return [:]
@@ -1380,11 +1381,11 @@ final class UsageStore: ObservableObject {
         return result
     }
 
-    private func sessionIndexSignature(codexHome: URL) -> String {
+    nonisolated private static func sessionIndexSignature(codexHome: URL) -> String {
         fileSignature(for: codexHome.appendingPathComponent("session_index.jsonl"))?.cacheKey ?? "missing"
     }
 
-    private func cachedOrParsedSessionFile(
+    nonisolated private static func cachedOrParsedSessionFile(
         _ url: URL,
         index: [String: String],
         cache: inout UsageParseCache,
@@ -1426,7 +1427,7 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    private func loadParseCache(indexSignature: String, source: UsageScanSource) -> (cache: UsageParseCache, needsRewrite: Bool) {
+    nonisolated private static func loadParseCache(indexSignature: String, source: UsageScanSource) -> (cache: UsageParseCache, needsRewrite: Bool) {
         let empty = UsageParseCache(
             version: Self.parseCacheVersion,
             codexHomePath: source.codexHome.path,
@@ -1448,7 +1449,7 @@ final class UsageStore: ObservableObject {
         return (cache, false)
     }
 
-    private func pruneMissingCacheFiles(in cache: inout UsageParseCache) -> Bool {
+    nonisolated private static func pruneMissingCacheFiles(in cache: inout UsageParseCache) -> Bool {
         let existingFiles = cache.files.filter { key, _ in
             FileManager.default.fileExists(atPath: key)
         }
@@ -1459,7 +1460,7 @@ final class UsageStore: ObservableObject {
         return true
     }
 
-    private func saveParseCache(_ cache: UsageParseCache, cacheURL: URL?) {
+    nonisolated private static func saveParseCache(_ cache: UsageParseCache, cacheURL: URL?) {
         guard let cacheURL else {
             return
         }
@@ -1472,7 +1473,7 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    private func cacheFileSize(cacheURL: URL?) -> UInt64 {
+    nonisolated private static func cacheFileSize(cacheURL: URL?) -> UInt64 {
         guard let cacheURL,
               let attributes = try? FileManager.default.attributesOfItem(atPath: cacheURL.path) else {
             return 0
@@ -1480,7 +1481,7 @@ final class UsageStore: ObservableObject {
         return (attributes[.size] as? NSNumber)?.uint64Value ?? 0
     }
 
-    private func fileSignature(for url: URL) -> FileSignature? {
+    nonisolated private static func fileSignature(for url: URL) -> FileSignature? {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
             return nil
         }
@@ -1489,14 +1490,14 @@ final class UsageStore: ObservableObject {
         return FileSignature(size: size, modifiedAt: modifiedAt)
     }
 
-    private static func scanCutoff(forDays days: Int?, now: Date = Date()) -> Date? {
+    nonisolated private static func scanCutoff(forDays days: Int?, now: Date = Date()) -> Date? {
         guard let days else {
             return nil
         }
         return Calendar.current.date(byAdding: .day, value: -(days + 1), to: now)
     }
 
-    private func sessionFiles(cutoff: Date?, codexHome: URL) -> [URL] {
+    nonisolated private static func sessionFiles(cutoff: Date?, codexHome: URL) -> [URL] {
         let folders = [
             codexHome.appendingPathComponent("sessions"),
             codexHome.appendingPathComponent("archived_sessions")
@@ -1517,13 +1518,13 @@ final class UsageStore: ObservableObject {
         return urls.sorted { $0.path > $1.path }
     }
 
-    private func fileMayContainEvents(_ url: URL, since cutoff: Date) -> Bool {
+    nonisolated private static func fileMayContainEvents(_ url: URL, since cutoff: Date) -> Bool {
         let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         let newestKnownDate = [sessionDate(from: url), modifiedAt].compactMap { $0 }.max()
         return newestKnownDate.map { $0 >= cutoff } ?? true
     }
 
-    private func sessionDate(from url: URL) -> Date? {
+    nonisolated private static func sessionDate(from url: URL) -> Date? {
         let name = url.deletingPathExtension().lastPathComponent
         guard let rolloutRange = name.range(of: "rollout-") else {
             return nil
@@ -1533,10 +1534,19 @@ final class UsageStore: ObservableObject {
             return nil
         }
         let end = name.index(start, offsetBy: 10)
-        return Self.dayFormatter.date(from: String(name[start..<end]))
+        let components = name[start..<end].split(separator: "-")
+        guard components.count == 3,
+              let year = Int(components[0]),
+              let month = Int(components[1]),
+              let day = Int(components[2]) else {
+            return nil
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        return calendar.date(from: DateComponents(year: year, month: month, day: day))
     }
 
-    private func parseSessionFile(_ url: URL, index: [String: String]) -> CachedSessionParse {
+    nonisolated private static func parseSessionFile(_ url: URL, index: [String: String]) -> CachedSessionParse {
         var sessionID = sessionIDFromFilename(url) ?? url.deletingPathExtension().lastPathComponent
         var chatTitle = index[sessionID] ?? sessionID
         var currentProject = ""
@@ -1656,7 +1666,7 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    private func forEachLine(in url: URL, _ body: (String, Int) -> Void) -> LineReadDiagnostics {
+    nonisolated private static func forEachLine(in url: URL, _ body: (String, Int) -> Void) -> LineReadDiagnostics {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
             return LineReadDiagnostics(issueCount: 1, latestIssue: "could not open for reading")
         }
@@ -1734,13 +1744,13 @@ final class UsageStore: ObservableObject {
         return LineReadDiagnostics(issueCount: issueCount, latestIssue: latestIssue)
     }
 
-    private func shouldDecodeLine(_ data: Data) -> Bool {
+    nonisolated private static func shouldDecodeLine(_ data: Data) -> Bool {
         data.range(of: Self.sessionMetaMarker) != nil ||
             data.range(of: Self.turnContextMarker) != nil ||
             data.range(of: Self.tokenCountMarker) != nil
     }
 
-    private func extractStringField(_ field: String, from line: String) -> String? {
+    nonisolated private static func extractStringField(_ field: String, from line: String) -> String? {
         let key = "\"\(field)\":\""
         guard let start = line.range(of: key)?.upperBound else {
             return nil
@@ -1773,10 +1783,10 @@ final class UsageStore: ObservableObject {
         return nil
     }
 
-    private func makeEntry(timestamp: Date, sessionID: String, chatTitle: String, project: String, model: String, tokens: UsageTokens, file: URL, line: Int) -> UsageEntry {
+    nonisolated private static func makeEntry(timestamp: Date, sessionID: String, chatTitle: String, project: String, model: String, tokens: UsageTokens, file: URL, line: Int) -> UsageEntry {
         let key = [
             sessionID,
-            Self.isoFormatter.string(from: timestamp),
+            timestamp.formatted(Self.fractionalISOFormatStyle),
             String(tokens.input),
             String(tokens.cachedInput),
             String(tokens.output),
@@ -1795,7 +1805,7 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    private func parseRateLimit(payload: [String: Any], seenAt: Date) -> RateLimitSnapshot? {
+    nonisolated private static func parseRateLimit(payload: [String: Any], seenAt: Date) -> RateLimitSnapshot? {
         guard let limits = payload["rate_limits"] as? [String: Any] else {
             return nil
         }
@@ -1812,7 +1822,7 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    private func parseWindowLimit(_ value: Any?) -> WindowLimit? {
+    nonisolated private static func parseWindowLimit(_ value: Any?) -> WindowLimit? {
         guard let dict = value as? [String: Any] else {
             return nil
         }
@@ -1822,7 +1832,7 @@ final class UsageStore: ObservableObject {
         return WindowLimit(usedPercent: used, windowMinutes: minutes, resetsAt: resetDate)
     }
 
-    private func resetCreditsDescription(_ value: Any?, parsedCredits: [ResetCredit]) -> String {
+    nonisolated private static func resetCreditsDescription(_ value: Any?, parsedCredits: [ResetCredit]) -> String {
         if value == nil || value is NSNull {
             return "No reset credits in latest local snapshot"
         }
@@ -1841,7 +1851,7 @@ final class UsageStore: ObservableObject {
         return "Reset credit data available"
     }
 
-    private func parseResetCredits(_ value: Any?) -> [ResetCredit] {
+    nonisolated private static func parseResetCredits(_ value: Any?) -> [ResetCredit] {
         if value == nil || value is NSNull {
             return []
         }
@@ -1866,7 +1876,7 @@ final class UsageStore: ObservableObject {
         return []
     }
 
-    private func parseResetCredit(_ value: Any, index: Int) -> ResetCredit? {
+    nonisolated private static func parseResetCredit(_ value: Any, index: Int) -> ResetCredit? {
         let fallback = "Reset Credit \(index + 1)"
         if let dict = value as? [String: Any] {
             let expiresAt = resetCreditDate(from: dict)
@@ -1885,7 +1895,7 @@ final class UsageStore: ObservableObject {
         return nil
     }
 
-    private func resetCreditID(from dict: [String: Any], fallback: String) -> String {
+    nonisolated private static func resetCreditID(from dict: [String: Any], fallback: String) -> String {
         for key in ["id", "credit_id", "name", "label"] {
             if let value = dict[key] as? String, !value.isEmpty {
                 return value
@@ -1894,7 +1904,7 @@ final class UsageStore: ObservableObject {
         return fallback
     }
 
-    private func resetCreditLabel(from dict: [String: Any], fallback: String) -> String {
+    nonisolated private static func resetCreditLabel(from dict: [String: Any], fallback: String) -> String {
         for key in ["label", "name", "title"] {
             if let value = dict[key] as? String, !value.isEmpty {
                 return value
@@ -1903,7 +1913,7 @@ final class UsageStore: ObservableObject {
         return fallback
     }
 
-    private func resetCreditDate(from dict: [String: Any]) -> Date? {
+    nonisolated private static func resetCreditDate(from dict: [String: Any]) -> Date? {
         for key in ["expires_at", "expiresAt", "expiry", "expires", "expiration", "expiry_at"] {
             if let date = dateValue(dict[key]) {
                 return date
@@ -1912,7 +1922,7 @@ final class UsageStore: ObservableObject {
         return nil
     }
 
-    private func tokens(from dict: [String: Any]) -> UsageTokens {
+    nonisolated private static func tokens(from dict: [String: Any]) -> UsageTokens {
         UsageTokens(
             input: max(intValue(dict["input_tokens"]) ?? 0, 0),
             cachedInput: max(intValue(dict["cached_input_tokens"]) ?? 0, 0),
@@ -1922,14 +1932,14 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    private func jsonObject(_ line: String) -> [String: Any]? {
+    nonisolated private static func jsonObject(_ line: String) -> [String: Any]? {
         guard let data = line.data(using: .utf8) else {
             return nil
         }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
-    private func intValue(_ value: Any?) -> Int? {
+    nonisolated private static func intValue(_ value: Any?) -> Int? {
         if let value = value as? Int { return value }
         if let value = value as? Double {
             guard value.isFinite,
@@ -1943,7 +1953,7 @@ final class UsageStore: ObservableObject {
         return nil
     }
 
-    private func doubleValue(_ value: Any?) -> Double? {
+    nonisolated private static func doubleValue(_ value: Any?) -> Double? {
         if let value = value as? Double { return value.isFinite ? value : nil }
         if let value = value as? Int { return Double(value) }
         if let value = value as? String,
@@ -1954,7 +1964,7 @@ final class UsageStore: ObservableObject {
         return nil
     }
 
-    private func dateValue(_ value: Any?) -> Date? {
+    nonisolated private static func dateValue(_ value: Any?) -> Date? {
         if let value = value as? Date {
             return value
         }
@@ -1967,12 +1977,12 @@ final class UsageStore: ObservableObject {
         return nil
     }
 
-    private func parseDate(_ value: String?) -> Date? {
+    nonisolated private static func parseDate(_ value: String?) -> Date? {
         guard let value else { return nil }
-        return Self.isoFormatter.date(from: value) ?? Self.fractionalISOFormatter.date(from: value)
+        return (try? Self.fractionalISOFormatStyle.parse(value)) ?? (try? Self.isoFormatStyle.parse(value))
     }
 
-    private func sessionIDFromFilename(_ url: URL) -> String? {
+    nonisolated private static func sessionIDFromFilename(_ url: URL) -> String? {
         let name = url.deletingPathExtension().lastPathComponent
         guard let range = name.range(of: "019", options: .backwards) else {
             return nil
@@ -2407,7 +2417,7 @@ final class UsageStore: ObservableObject {
     private static let modelRatesKey = "modelRates.v1"
     private static let modelRateCatalogVersionKey = "modelRateCatalogVersion.v1"
     private static let defaultRateCatalogVersion = 3
-    private static let parseCacheVersion = 3
+    nonisolated private static let parseCacheVersion = 3
 
     private static let byteCountFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -2417,18 +2427,13 @@ final class UsageStore: ObservableObject {
         return formatter
     }()
 
-    private static let isoFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+    nonisolated private static let fractionalISOFormatStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    nonisolated private static let isoFormatStyle = Date.ISO8601FormatStyle()
 
-    private static let fractionalISOFormatter = ISO8601DateFormatter()
-
-    private static let sessionMetaMarker = Data(#""type":"session_meta""#.utf8)
-    private static let turnContextMarker = Data(#""type":"turn_context""#.utf8)
-    private static let tokenCountMarker = Data(#""type":"token_count""#.utf8)
-    private static let maximumLogLineBytes = 8 * 1024 * 1024
+    nonisolated private static let sessionMetaMarker = Data(#""type":"session_meta""#.utf8)
+    nonisolated private static let turnContextMarker = Data(#""type":"turn_context""#.utf8)
+    nonisolated private static let tokenCountMarker = Data(#""type":"token_count""#.utf8)
+    nonisolated private static let maximumLogLineBytes = 8 * 1024 * 1024
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -2445,13 +2450,6 @@ final class UsageStore: ObservableObject {
     private static let diagnosticDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, h:mm a"
-        return formatter
-    }()
-
-    private static let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
         return formatter
     }()
 

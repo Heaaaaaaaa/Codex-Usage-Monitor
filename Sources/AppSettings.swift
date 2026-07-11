@@ -228,6 +228,7 @@ struct AppConfiguration: Codable, Equatable {
     }
 }
 
+@MainActor
 final class AppSettings: ObservableObject {
     @Published private(set) var launchAtLoginEnabled = false
     @Published private(set) var launchAtLoginCanToggle = true

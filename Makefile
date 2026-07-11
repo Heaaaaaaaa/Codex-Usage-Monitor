@@ -39,6 +39,7 @@ X86_64_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-x86_64
 DIAG_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-diagnose
 TEST_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-tests
 RUNTIME_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-runtime
+CONCURRENCY_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-concurrency
 SOURCES := $(wildcard Sources/*.swift)
 BUNDLE_RESOURCES := Resources/AppIcon.icns Resources/PrivacyInfo.xcprivacy
 APP_ICON := Resources/AppIcon.icns
@@ -58,7 +59,7 @@ NOTARY_PROFILE ?=
 NOTARY_KEYCHAIN ?=
 SIGNATURE_POLICY ?= any
 
-.PHONY: all clean run diagnose demo-data verify-runtime release release-signed release-notarized release-dmg-notarized release-manifest publish-preflight verify-release verify-public-release verify-public-source audit-public-history source-archive verify-source-archive verify-app verify-privacy verify-version verify-artifacts verify-public-artifacts verify-manifest verify-public-manifest package dmg package-dmg checksum-zip checksum-dmg checksum-source assets check test sign sign-developer-id sign-dmg notarize notarize-dmg staple staple-dmg prepare-info-plist require-clean-repo require-public-bundle-identifier require-sign-identity require-notary-profile print-version print-build
+.PHONY: all clean run diagnose demo-data verify-runtime verify-concurrency release release-signed release-notarized release-dmg-notarized release-manifest publish-preflight verify-release verify-public-release verify-public-source audit-public-history source-archive verify-source-archive verify-app verify-privacy verify-version verify-artifacts verify-public-artifacts verify-manifest verify-public-manifest package dmg package-dmg checksum-zip checksum-dmg checksum-source assets check test sign sign-developer-id sign-dmg notarize notarize-dmg staple staple-dmg prepare-info-plist require-clean-repo require-public-bundle-identifier require-sign-identity require-notary-profile print-version print-build
 
 all: $(EXECUTABLE)
 
@@ -222,7 +223,14 @@ require-clean-repo:
 require-public-bundle-identifier:
 	@python3 Tools/ValidateBundleIdentifier.py "$(BUNDLE_IDENTIFIER)"
 
-check: verify-version all test diagnose verify-app
+check: verify-version verify-concurrency all test diagnose verify-app
+
+verify-concurrency:
+	mkdir -p "$(CONCURRENCY_MODULE_CACHE)"
+	xcrun swiftc -typecheck -O -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" $(SOURCES) -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
+	xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(SOURCES) -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
+	xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(TEST_DATA_SOURCES) Tools/RunTests.swift -framework SwiftUI -framework Combine -framework ServiceManagement
+	xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(DATA_SOURCES) Tools/DumpSummary.swift -framework SwiftUI -framework Combine
 
 verify-version:
 	python3 "$(RELEASE_VERSION_VALIDATOR)" --repo "$(CURDIR)"

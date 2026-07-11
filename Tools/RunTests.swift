@@ -242,6 +242,7 @@ private func currentDayString(daysAgo: Int) -> String {
     return formatter.string(from: makeDate(daysAgo: daysAgo))
 }
 
+@MainActor
 private func configuredStore() -> UsageStore {
     let store = UsageStore(preferences: isolatedPreferences())
     store.rates = [
@@ -291,6 +292,7 @@ private func isolatedPreferences() -> UserDefaults {
     return preferences
 }
 
+@MainActor
 private func testSevenDaySummaryAndCost() throws {
     let store = configuredStore()
     try requireEqual(store.summary.eventCount, 2, "7-day event count")
@@ -324,6 +326,7 @@ private func testSevenDaySummaryAndCost() throws {
     try requireApprox(store.recentRows.first?.cost ?? -1, 0.00165, "recent activity cost")
 }
 
+@MainActor
 private func testTodayWindowFiltersCurrentCalendarDay() throws {
     let preferences = isolatedPreferences()
     let store = UsageStore(preferences: preferences)
@@ -370,6 +373,7 @@ private func testTodayWindowFiltersCurrentCalendarDay() throws {
     try requireEqual(reloaded.dateWindow, .today, "today window preference persists")
 }
 
+@MainActor
 private func testCalendarWindowBoundaries() throws {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(identifier: "Asia/Kuala_Lumpur") ?? .current
@@ -390,6 +394,7 @@ private func testCalendarWindowBoundaries() throws {
     try require(DateWindow.lifetime.startDate(now: now, calendar: calendar) == nil, "lifetime has no start boundary")
 }
 
+@MainActor
 private func testComparisonUsesSelectedScope() throws {
     let store = UsageStore(preferences: isolatedPreferences())
     store.rates = [
@@ -447,6 +452,7 @@ private func testComparisonUsesSelectedScope() throws {
     try requireApprox(store.comparison.tokenDeltaPercent ?? 0, 1.5, "scoped comparison token delta percent")
 }
 
+@MainActor
 private func testScopeFiltering() throws {
     let store = configuredStore()
     store.setScopeMode(.project)
@@ -470,6 +476,7 @@ private func testScopeFiltering() throws {
     try requireApprox(store.summary.cost, 0.00165, "selected model cost")
 }
 
+@MainActor
 private func testScopeOptionsIncludeAllProjectsChatsAndModels() throws {
     let store = UsageStore(preferences: isolatedPreferences())
     store.rates = [
@@ -512,6 +519,7 @@ private func testScopeOptionsIncludeAllProjectsChatsAndModels() throws {
     try requireEqual(store.summary.tokens.total, 110, "low-usage model filter tokens")
 }
 
+@MainActor
 private func testCSVExportEscaping() throws {
     let store = configuredStore()
     let csv = store.csvString()
@@ -524,6 +532,7 @@ private func testCSVExportEscaping() throws {
     try require(!csv.contains("Old chat"), "CSV respects current date window")
 }
 
+@MainActor
 private func testLifetimeIncludesOlderRowsAndTotalOnlyCost() throws {
     let store = configuredStore()
     store.dateWindow = .lifetime
@@ -539,6 +548,7 @@ private func testLifetimeIncludesOlderRowsAndTotalOnlyCost() throws {
     try require(!store.comparison.isVisible, "lifetime comparison hidden")
 }
 
+@MainActor
 private func testSummaryText() throws {
     let store = configuredStore()
     let summary = store.summaryText()
@@ -556,6 +566,7 @@ private func testSummaryText() throws {
     try require(summary.contains("Pricing limits: \(UsageStore.defaultRateLimitations)"), "summary pricing limitations")
 }
 
+@MainActor
 private func testTouchBarSummaryText() throws {
     let store = configuredStore()
     try requireEqual(store.touchBarSummary, "7d 1.8K tokens $0.01", "touch bar seven-day summary")
@@ -565,6 +576,7 @@ private func testTouchBarSummaryText() throws {
     try requireEqual(store.touchBarSummary, "Life 2.8K tokens $0.02", "touch bar lifetime summary")
 }
 
+@MainActor
 private func testUsageHealthStatus() throws {
     let freshStore = UsageStore(preferences: isolatedPreferences())
     freshStore.recompute()
@@ -634,6 +646,7 @@ private func testUsageHealthStatus() throws {
     try requireEqual(unpricedStore.healthStatus.action, .addRates, "unpriced health action")
 }
 
+@MainActor
 private func testPreferencesPersistFiltersAndRates() throws {
     let preferences = isolatedPreferences()
     let firstStore = UsageStore(preferences: preferences)
@@ -664,6 +677,7 @@ private func testPreferencesPersistFiltersAndRates() throws {
     try requireEqual(fourthStore.selectedScopeID, "", "selected scope cleared")
 }
 
+@MainActor
 private func testCodexHomePreferenceCanBeChangedAndReset() throws {
     let preferences = isolatedPreferences()
     let customHome = FileManager.default.temporaryDirectory
@@ -694,6 +708,7 @@ private func testCodexHomePreferenceCanBeChangedAndReset() throws {
     try requireEqual(afterReset.codexHomeURL.path, UsageStore.defaultCodexHomeURL.path, "reset codex home path")
 }
 
+@MainActor
 private func testUnpricedModelsCanBeAddedToRates() throws {
     let store = configuredStore()
     store.entries.append(
@@ -750,6 +765,7 @@ private func testUnpricedModelsCanBeAddedToRates() throws {
     try require(unknownStore.rates.contains { $0.model == "unknown" }, "missing model metadata receives an editable rate row")
 }
 
+@MainActor
 private func testPricingCoverageAndSnapshotAliases() throws {
     let store = UsageStore(preferences: isolatedPreferences())
     store.rates = [
@@ -828,6 +844,7 @@ private func testPricingCoverageAndSnapshotAliases() throws {
     try requireEqual(store.unpricedModelNames, ["gpt-5.5-2026-02-31"], "invalid snapshot dates stay unpriced")
 }
 
+@MainActor
 private func testCustomRateRowsCanBeEditedAndSanitized() throws {
     let preferences = isolatedPreferences()
     let store = UsageStore(preferences: preferences)
@@ -865,6 +882,7 @@ private func testCustomRateRowsCanBeEditedAndSanitized() throws {
     try requireEqual(afterRemove.rates.count, 1, "invalid remove ignored")
 }
 
+@MainActor
 private func testRateDraftsStayTransactionalUntilApplied() throws {
     let store = configuredStore()
     let originalRates = store.rates
@@ -885,6 +903,7 @@ private func testRateDraftsStayTransactionalUntilApplied() throws {
     try require(store.summary.cost > originalCost, "apply recomputes the cost estimate")
 }
 
+@MainActor
 private func testDefaultRateSourceAndReset() throws {
     try require(UsageStore.defaultRateSourceSummary.contains("OpenAI API standard short-context rates"), "default rate source profile")
     try require(UsageStore.defaultRateSourceSummary.contains("2026-07-10"), "default rate source date")
@@ -910,6 +929,7 @@ private func testDefaultRateSourceAndReset() throws {
     try requireEqual(reloaded.rates, UsageStore.defaultRates, "reset default rates persist")
 }
 
+@MainActor
 private func testDefaultRateCatalogMigration() throws {
     let preferences = isolatedPreferences()
     let legacyRates = [
@@ -955,6 +975,7 @@ private func testDefaultRateCatalogMigration() throws {
     try require(!reordered.rates.contains { $0.model == "gpt-5.6-luna" }, "version three does not resurrect removed rows")
 }
 
+@MainActor
 private func testRefreshGuardPreventsDuplicateStartupScan() throws {
     let store = UsageStore(preferences: isolatedPreferences())
     try require(store.shouldRefreshOnAppear, "empty idle store should refresh on appear")
@@ -1005,6 +1026,7 @@ private func testRefreshGuardPreventsDuplicateStartupScan() throws {
     try require(!store.shouldRefreshOnAppear, "loaded idle store should not refresh on appear")
 }
 
+@MainActor
 private func testChangingCodexHomeRejectsStaleScanResults() throws {
     let firstHome = try makeTemporaryCodexHome()
     let secondHome = try makeTemporaryCodexHome()
@@ -1079,6 +1101,7 @@ private func testChangingCodexHomeRejectsStaleScanResults() throws {
     try requireEqual(store.scanDiagnostics.scannedFileCount, 1, "diagnostics describe current source only")
 }
 
+@MainActor
 private func testResetCreditDisplay() throws {
     let now = Date(timeIntervalSince1970: 1_000_000)
     try requireEqual(
@@ -1126,6 +1149,7 @@ private func testResetCreditDisplay() throws {
     try requireEqual(UsageStore.expiryText(now.addingTimeInterval(-1), now: now), "expired", "expired reset-credit expiry")
 }
 
+@MainActor
 private func testWindowLimitExpiryDisplay() throws {
     let now = Date(timeIntervalSince1970: 1_000_000)
     let active = WindowLimit(usedPercent: 38, windowMinutes: 300, resetsAt: now.addingTimeInterval(9_000))
@@ -1158,6 +1182,7 @@ private func testWindowLimitExpiryDisplay() throws {
     try requireEqual(UsageStore.percentLeft(outOfRange), "100% left", "percentage left is clamped")
 }
 
+@MainActor
 private func testAppSettingsPersistStartupPreference() throws {
     let preferences = isolatedPreferences()
     try requireEqual(AppSettings.loadShowWindowOnLaunch(preferences: preferences), true, "default startup window setting")
@@ -1228,6 +1253,7 @@ private func testAppSettingsPersistStartupPreference() throws {
     try requireEqual(eighthSettings.budgetNotificationsEnabled, false, "disabled budget notifications")
 }
 
+@MainActor
 private func testBudgetSettingsAndStatus() throws {
     let preferences = isolatedPreferences()
     let settings = AppSettings(preferences: preferences, refreshLoginStatus: false)
@@ -1293,6 +1319,7 @@ private func testBudgetSettingsAndStatus() throws {
     try requireApprox(reloaded.costBudgetLimit, 0, "negative cost budget clamps")
 }
 
+@MainActor
 private func testSettingsConfigurationImportExport() throws {
     let sourcePreferences = isolatedPreferences()
     let sourceCodexHome = try makeTemporaryCodexHome()
@@ -1398,6 +1425,7 @@ private func testSettingsConfigurationImportExport() throws {
     try requireEqual(targetSettings.trendMetric, .tokens, "legacy settings default trend metric")
 }
 
+@MainActor
 private func testStatusMenuSnapshotLines() throws {
     let store = configuredStore()
     let settings = AppSettings(preferences: isolatedPreferences(), refreshLoginStatus: false)
@@ -1433,6 +1461,7 @@ private func testStatusMenuSnapshotLines() throws {
     try requireEqual(alertLines.last, "Status: Ready", "status menu health line stays last")
 }
 
+@MainActor
 private func testDiagnosticReportIncludesSupportContext() throws {
     let store = configuredStore()
     let privateProjectName = store.projectOptionRows[0].label
@@ -1495,6 +1524,7 @@ private func testDiagnosticReportIncludesSupportContext() throws {
     try require(report.contains(store.diagnosticSummary), "diagnostic report machine summary")
 }
 
+@MainActor
 private func testParseCacheReusesAndInvalidatesFiles() throws {
     let codexHome = try buildCodexFixture()
     let cacheURL = try makeTemporaryCacheURL()
@@ -1553,6 +1583,7 @@ private func testParseCacheReusesAndInvalidatesFiles() throws {
     try require(!FileManager.default.fileExists(atPath: cacheURL.path), "clear cache removes cache file")
 }
 
+@MainActor
 private func testParseDiagnosticsReportMalformedTokenLines() throws {
     let codexHome = try makeTemporaryCodexHome()
     let cacheURL = try makeTemporaryCacheURL()
@@ -1610,6 +1641,7 @@ private func testParseDiagnosticsReportMalformedTokenLines() throws {
     try requireEqual(cachedStore.healthStatus.title, "Some log lines were skipped", "malformed parser cached health title")
 }
 
+@MainActor
 private func testParserHandlesCounterResetsAndFallbackRepeats() throws {
     let codexHome = try makeTemporaryCodexHome()
     let cacheURL = try makeTemporaryCacheURL()
@@ -1658,6 +1690,7 @@ private func testParserHandlesCounterResetsAndFallbackRepeats() throws {
     try requireEqual(store.summary.tokens.total, 255, "counter reset and fallback total")
 }
 
+@MainActor
 private func testParserBoundsOversizedRelevantLines() throws {
     let codexHome = try makeTemporaryCodexHome()
     let cacheURL = try makeTemporaryCacheURL()
@@ -1699,6 +1732,7 @@ private func testParserBoundsOversizedRelevantLines() throws {
     try require(store.scanDiagnostics.latestParseIssue?.contains("8 MB safety limit") == true, "oversized parser issue detail")
 }
 
+@MainActor
 private func testCodexJSONLParsing() throws {
     let codexHome = try buildCodexFixture()
     let cacheURL = try makeTemporaryCacheURL()
@@ -1753,6 +1787,7 @@ private func testCodexJSONLParsing() throws {
     try require(!csv.contains("Old parser fixture"), "parser excludes old file from 7-day scan")
 }
 
+@MainActor
 private func testLongRunningSessionIncludesRecentEvents() throws {
     let codexHome = try makeTemporaryCodexHome()
     let cacheURL = try makeTemporaryCacheURL()
@@ -1808,6 +1843,7 @@ private func testLongRunningSessionIncludesRecentEvents() throws {
     try require(store.isLoadingSelectedWindow, "wider window waits for additional coverage")
 }
 
+@MainActor
 private func testExtremeNumericLogValuesAreContained() throws {
     let root = try makeTemporaryCodexHome()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -1854,6 +1890,7 @@ private func testExtremeNumericLogValuesAreContained() throws {
     try requireEqual(store.latestLimits?.primary?.resetsAt, nil, "out-of-range reset timestamp is ignored")
 }
 
+@MainActor
 private func testPrivacyManifestDeclaresRequiredReasonAPIs() throws {
     let url = URL(fileURLWithPath: "Resources/PrivacyInfo.xcprivacy")
     let data = try Data(contentsOf: url)
@@ -1874,8 +1911,9 @@ private func testPrivacyManifestDeclaresRequiredReasonAPIs() throws {
 
 @main
 private struct RunTests {
+    @MainActor
     static func main() {
-        let tests: [(String, () throws -> Void)] = [
+        let tests: [(String, @MainActor () throws -> Void)] = [
             ("seven-day summary and cost", testSevenDaySummaryAndCost),
             ("today window", testTodayWindowFiltersCurrentCalendarDay),
             ("calendar window boundaries", testCalendarWindowBoundaries),

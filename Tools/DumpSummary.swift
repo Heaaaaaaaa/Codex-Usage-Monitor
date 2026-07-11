@@ -2,6 +2,7 @@ import Foundation
 
 @main
 struct DumpSummary {
+    @MainActor
     static func main() {
         let suiteName = "CodexUsageMonitorDiagnostics-\(UUID().uuidString)"
         let preferences = UserDefaults(suiteName: suiteName) ?? .standard

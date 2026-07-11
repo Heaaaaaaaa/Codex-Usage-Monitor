@@ -63,6 +63,23 @@ def test_menu_bar_bundle_metadata() -> None:
     require("Print :LSUIElement" in makefile, "release verification must enforce LSUIElement")
 
 
+def test_strict_concurrency_gate() -> None:
+    repo = Path(__file__).resolve().parent.parent
+    makefile = (repo / "Makefile").read_text(encoding="utf-8")
+    required_snippets = [
+        "verify-concurrency:",
+        "-typecheck -O",
+        "-warn-concurrency",
+        "-strict-concurrency=complete",
+        "-warnings-as-errors",
+        "Tools/RunTests.swift",
+        "Tools/DumpSummary.swift",
+        "check: verify-version verify-concurrency",
+    ]
+    for snippet in required_snippets:
+        require(snippet in makefile, f"strict concurrency gate missing: {snippet}")
+
+
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
     version, build, errors = release_version_errors(repo, "v0.4.1")
@@ -292,6 +309,7 @@ def main() -> int:
         ("Developer ID identity validation", test_developer_id_identity_validation),
         ("public bundle identifier validation", test_public_bundle_identifier_validation),
         ("menu bar bundle metadata", test_menu_bar_bundle_metadata),
+        ("strict concurrency gate", test_strict_concurrency_gate),
         ("release version validation", test_release_version_validation),
         ("notary keychain command", test_notary_keychain_command),
         ("publish workflow safeguards", test_publish_workflow_safeguards),

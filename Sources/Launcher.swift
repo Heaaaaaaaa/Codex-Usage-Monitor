@@ -2,8 +2,9 @@ import AppKit
 import Combine
 import Darwin
 import SwiftUI
-import UserNotifications
+@preconcurrency import UserNotifications
 
+@MainActor
 final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
     private let store = UsageStore()
     private let appSettings = AppSettings()
@@ -316,11 +317,19 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
             return
         }
 
-        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.store.refreshInBackgroundIfIdle()
-        }
+        let timer = Timer.scheduledTimer(
+            timeInterval: interval,
+            target: self,
+            selector: #selector(refreshTimerDidFire(_:)),
+            userInfo: nil,
+            repeats: true
+        )
         timer.tolerance = max(1, interval * 0.10)
         refreshTimer = timer
+    }
+
+    @objc private func refreshTimerDidFire(_ timer: Timer) {
+        store.refreshInBackgroundIfIdle()
     }
 
     private func restartLogWatcher() {
@@ -501,7 +510,8 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
     }
 }
 
-private final class BudgetNotificationController: NSObject, UNUserNotificationCenterDelegate {
+@MainActor
+private final class BudgetNotificationController: NSObject, @preconcurrency UNUserNotificationCenterDelegate {
     private var lastAlertKey: String?
 
     override init() {
@@ -544,11 +554,11 @@ private final class BudgetNotificationController: NSObject, UNUserNotificationCe
         center.getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                self.post(alert, center: center)
+                Self.post(alert, center: center)
             case .notDetermined:
                 center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
                     if granted {
-                        self.post(alert, center: center)
+                        Self.post(alert, center: center)
                     }
                 }
             case .denied:
@@ -559,7 +569,7 @@ private final class BudgetNotificationController: NSObject, UNUserNotificationCe
         }
     }
 
-    private func post(_ alert: BudgetAlert, center: UNUserNotificationCenter) {
+    nonisolated private static func post(_ alert: BudgetAlert, center: UNUserNotificationCenter) {
         let content = UNMutableNotificationContent()
         content.title = alert.level == .exceeded ? "Codex usage budget exceeded" : "Codex usage budget near limit"
         content.body = alert.detail
@@ -584,7 +594,7 @@ private final class BudgetNotificationController: NSObject, UNUserNotificationCe
 }
 
 private final class CodexLogWatcher {
-    var onChange: (() -> Void)?
+    var onChange: (@MainActor @Sendable () -> Void)?
 
     private let queue = DispatchQueue(label: "CodexUsageMonitor.LogWatcher")
     private var sources: [DispatchSourceFileSystemObject] = []
@@ -674,9 +684,10 @@ private final class CodexLogWatcher {
 
     private func scheduleChange() {
         pendingChange?.cancel()
-        let work = DispatchWorkItem { [weak self] in
+        let callback = onChange
+        let work = DispatchWorkItem {
             DispatchQueue.main.async {
-                self?.onChange?()
+                callback?()
             }
         }
         pendingChange = work

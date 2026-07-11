@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import UniformTypeIdentifiers
 
+@MainActor
 enum AppActions {
     static func showAbout() {
         let info = Bundle.main.infoDictionary ?? [:]

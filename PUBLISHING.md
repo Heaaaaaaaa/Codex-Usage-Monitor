@@ -10,7 +10,7 @@ Run a full local verification before sharing any artifact:
 make verify-release
 ```
 
-This builds the universal app, runs tests, validates plists and privacy manifests, verifies the app signature, creates the zip and DMG, writes SHA-256 checksum files, verifies the DMG, and verifies the release manifest, including the actual executable architectures and code-signature metadata.
+This runs Swift complete concurrency checking with warnings treated as errors, builds the universal app, runs tests, validates plists and privacy manifests, verifies the app signature, creates the zip and DMG, writes SHA-256 checksum files, verifies the DMG, and verifies the release manifest, including the actual executable architectures and code-signature metadata.
 
 In a logged-in macOS desktop session, verify the transient menu-bar panel behavior separately:
 

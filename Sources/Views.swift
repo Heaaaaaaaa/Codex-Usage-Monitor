@@ -27,6 +27,7 @@ private enum BreakdownKind: String, CaseIterable, Identifiable {
         }
     }
 
+    @MainActor
     func rows(from store: UsageStore) -> [BreakdownRow] {
         switch self {
         case .projects: return store.projectRows
