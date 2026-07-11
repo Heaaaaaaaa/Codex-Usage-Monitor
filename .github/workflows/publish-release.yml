@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 60
     environment: release
     env:
-      ARTIFACT_DIR: ${{ runner.temp }}/codex-usage-release
       PUBLIC_BUNDLE_IDENTIFIER: dev.codexusage.monitor
       NOTARY_PROFILE: CodexUsageMonitorCI
 
@@ -112,7 +111,7 @@ jobs:
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
         run: |
           make release-dmg-notarized \
-            OUT_DIR="$ARTIFACT_DIR" \
+            OUT_DIR="$RUNNER_TEMP/codex-usage-release" \
             BUNDLE_IDENTIFIER="$PUBLIC_BUNDLE_IDENTIFIER" \
             SIGN_IDENTITY="$SIGN_IDENTITY" \
             NOTARY_PROFILE="$NOTARY_PROFILE" \
@@ -136,11 +135,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.dmg#Codex Usage Monitor $RELEASE_VERSION DMG" \
-            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.dmg.sha256#DMG SHA-256" \
-            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.zip#Codex Usage Monitor $RELEASE_VERSION ZIP" \
-            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.zip.sha256#ZIP SHA-256" \
-            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.manifest.json#Release manifest" \
+            "$RUNNER_TEMP/codex-usage-release/CodexUsageMonitor-$RELEASE_VERSION.dmg#Codex Usage Monitor $RELEASE_VERSION DMG" \
+            "$RUNNER_TEMP/codex-usage-release/CodexUsageMonitor-$RELEASE_VERSION.dmg.sha256#DMG SHA-256" \
+            "$RUNNER_TEMP/codex-usage-release/CodexUsageMonitor-$RELEASE_VERSION.zip#Codex Usage Monitor $RELEASE_VERSION ZIP" \
+            "$RUNNER_TEMP/codex-usage-release/CodexUsageMonitor-$RELEASE_VERSION.zip.sha256#ZIP SHA-256" \
+            "$RUNNER_TEMP/codex-usage-release/CodexUsageMonitor-$RELEASE_VERSION.manifest.json#Release manifest" \
             --verify-tag \
             --generate-notes \
             --title "Codex Usage Monitor $RELEASE_VERSION"

@@ -16,7 +16,6 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     env:
-      ARTIFACT_DIR: ${{ runner.temp }}/codex-usage-artifacts
       PUBLIC_BUNDLE_IDENTIFIER: dev.codexusage.monitor
 
     steps:
@@ -29,7 +28,7 @@ jobs:
           swift --version
 
       - name: Verify release
-        run: make verify-public-release OUT_DIR="$ARTIFACT_DIR" BUNDLE_IDENTIFIER="$PUBLIC_BUNDLE_IDENTIFIER"
+        run: make verify-public-release OUT_DIR="$RUNNER_TEMP/codex-usage-artifacts" BUNDLE_IDENTIFIER="$PUBLIC_BUNDLE_IDENTIFIER"
 
       - name: Verify bundle identifier override
         run: make verify-app OUT_DIR="$PWD/custom-bundle-check" BUNDLE_IDENTIFIER=com.example.codexusagemonitor
