@@ -2,6 +2,8 @@
 
 ## 0.4.1 - 2026-07-11
 
+- Refreshed the synthetic public screenshots with complete cursor-free dashboard and Rates captures.
+
 - Declared the app as an `LSUIElement` agent so it launches directly as a menu-bar utility without a transient Dock presence.
 - Counted the first usage snapshot after a cumulative token-counter reset instead of silently dropping that segment.
 - Limited fallback deduplication to consecutive duplicate snapshots so later legitimate turns with the same token shape remain counted.

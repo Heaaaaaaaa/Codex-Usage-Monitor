@@ -20,3 +20,5 @@ python3 Tools/MakeDemoFixture.py \
 ```
 
 Point a separate QA copy of the app at the generated folder, use the 7-day window, and capture the Dashboard and Settings > Rates views. The committed images are cropped only to omit the macOS screen-recording title strip; the app UI is otherwise unmodified.
+
+Before committing, inspect both images at their original size. The full popover must be present, the pointer must be outside the captured pixels, and no text field may have selected text or a focus highlight. Export the final files as complete baseline JPEGs so repository and browser previews render the entire frame consistently.
