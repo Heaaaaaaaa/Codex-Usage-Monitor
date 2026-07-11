@@ -1,0 +1,48 @@
+name: Release Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    name: Build and verify release artifacts
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      ARTIFACT_DIR: ${{ runner.temp }}/codex-usage-artifacts
+      PUBLIC_BUNDLE_IDENTIFIER: dev.codexusage.monitor
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Verify release
+        run: make verify-public-release OUT_DIR="$ARTIFACT_DIR" BUNDLE_IDENTIFIER="$PUBLIC_BUNDLE_IDENTIFIER"
+
+      - name: Verify bundle identifier override
+        run: make verify-app OUT_DIR="$PWD/custom-bundle-check" BUNDLE_IDENTIFIER=com.example.codexusagemonitor
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexUsageMonitor-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/codex-usage-artifacts/CodexUsageMonitor.app
+            ${{ runner.temp }}/codex-usage-artifacts/CodexUsageMonitor-*.zip
+            ${{ runner.temp }}/codex-usage-artifacts/CodexUsageMonitor-*.zip.sha256
+            ${{ runner.temp }}/codex-usage-artifacts/CodexUsageMonitor-*.dmg
+            ${{ runner.temp }}/codex-usage-artifacts/CodexUsageMonitor-*.dmg.sha256
+            ${{ runner.temp }}/codex-usage-artifacts/CodexUsageMonitor-*.manifest.json

@@ -1,0 +1,153 @@
+name: Publish Notarized Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-release:
+    name: Sign, notarize, and publish
+    runs-on: macos-latest
+    timeout-minutes: 60
+    environment: release
+    env:
+      ARTIFACT_DIR: ${{ runner.temp }}/codex-usage-release
+      PUBLIC_BUNDLE_IDENTIFIER: dev.codexusage.monitor
+      NOTARY_PROFILE: CodexUsageMonitorCI
+
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag and metadata
+        run: |
+          python3 Tools/ValidateReleaseVersion.py --repo "$GITHUB_WORKSPACE" --tag "$GITHUB_REF_NAME"
+          echo "RELEASE_VERSION=$(make -s print-version)" >> "$GITHUB_ENV"
+
+      - name: Check signing secrets
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_DEVELOPER_ID_P12_BASE64 \
+            APPLE_DEVELOPER_ID_P12_PASSWORD \
+            APPLE_SIGN_IDENTITY \
+            APPLE_ID \
+            APPLE_TEAM_ID \
+            APPLE_APP_SPECIFIC_PASSWORD
+          do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing release secret: %s\n' "${missing[@]}"
+            exit 2
+          fi
+
+      - name: Configure temporary signing keychain
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/codex-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/codex-release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          printf '%s' "$APPLE_DEVELOPER_ID_P12_BASE64" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain_path"
+
+          login_keychain="$HOME/Library/Keychains/login.keychain-db"
+          if [[ -f "$login_keychain" ]]; then
+            security list-keychains -d user -s "$keychain_path" "$login_keychain"
+          else
+            security list-keychains -d user -s "$keychain_path"
+          fi
+
+          security find-identity -v -p codesigning "$keychain_path" | grep -F "$APPLE_SIGN_IDENTITY"
+          xcrun notarytool store-credentials "$NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --keychain "$keychain_path" \
+            --validate
+
+          echo "NOTARY_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+
+      - name: Build signed and notarized release
+        env:
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+        run: |
+          make release-dmg-notarized \
+            OUT_DIR="$ARTIFACT_DIR" \
+            BUNDLE_IDENTIFIER="$PUBLIC_BUNDLE_IDENTIFIER" \
+            SIGN_IDENTITY="$SIGN_IDENTITY" \
+            NOTARY_PROFILE="$NOTARY_PROFILE" \
+            NOTARY_KEYCHAIN="$NOTARY_KEYCHAIN"
+
+      - name: Upload verified workflow artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexUsageMonitor-${{ github.ref_name }}-notarized
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/codex-usage-release/CodexUsageMonitor-*.zip
+            ${{ runner.temp }}/codex-usage-release/CodexUsageMonitor-*.zip.sha256
+            ${{ runner.temp }}/codex-usage-release/CodexUsageMonitor-*.dmg
+            ${{ runner.temp }}/codex-usage-release/CodexUsageMonitor-*.dmg.sha256
+            ${{ runner.temp }}/codex-usage-release/CodexUsageMonitor-*.manifest.json
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.dmg#Codex Usage Monitor $RELEASE_VERSION DMG" \
+            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.dmg.sha256#DMG SHA-256" \
+            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.zip#Codex Usage Monitor $RELEASE_VERSION ZIP" \
+            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.zip.sha256#ZIP SHA-256" \
+            "$ARTIFACT_DIR/CodexUsageMonitor-$RELEASE_VERSION.manifest.json#Release manifest" \
+            --verify-tag \
+            --generate-notes \
+            --title "Codex Usage Monitor $RELEASE_VERSION"
+
+      - name: Remove temporary credentials
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/codex-release.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/codex-developer-id.p12"

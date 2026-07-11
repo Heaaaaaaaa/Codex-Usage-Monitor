@@ -1,0 +1,22 @@
+# Build products
+build/
+*.app/
+*.dSYM/
+
+# Local runtime/debug files
+*.log
+.DS_Store
+
+# Temporary output kept from earlier builds
+old-output/
+
+# Xcode and SwiftPM local state
+.build/
+DerivedData/
+Package.resolved
+xcuserdata/
+*.xcuserstate
+
+# Python helper caches
+__pycache__/
+*.pyc

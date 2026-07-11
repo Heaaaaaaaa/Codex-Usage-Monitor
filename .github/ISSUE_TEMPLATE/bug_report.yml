@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible Codex Usage Monitor problem
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve Codex Usage Monitor. Do not attach raw Codex JSONL logs, authentication files, exported usage history, or screenshots containing personal project and chat names.
+  - type: input
+    id: app_version
+    attributes:
+      label: App version and build
+      placeholder: "0.4.1 (5)"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS and Mac architecture
+      placeholder: "macOS 15.5, Apple silicon"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic data from `make demo-data` when possible.
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Reviewed diagnostic report
+      description: Paste Settings > Diagnostics > Copy Report after reviewing and removing anything you do not want to share.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed raw logs, credentials, personal project/chat names, and other sensitive information.
+          required: true
