@@ -3,6 +3,7 @@
 ## 0.4.1 - 2026-07-11
 
 - Refreshed the synthetic public screenshots with complete cursor-free dashboard and Rates captures.
+- Allowed standard version tags to skip notarized publishing cleanly when Apple signing secrets are not configured.
 
 - Declared the app as an `LSUIElement` agent so it launches directly as a menu-bar utility without a transient Dock presence.
 - Counted the first usage snapshot after a cumulative token-counter reset instead of silently dropping that segment.

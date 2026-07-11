@@ -103,6 +103,8 @@ Set `NOTARY_KEYCHAIN=/path/to/keychain-db` when the notary profile is stored in 
 
 `.github/workflows/publish-release.yml` runs only for pushed `v*` tags. It validates that the tag, `Makefile`, `Info.plist`, changelog, and documented artifact names agree; imports the Developer ID certificate into a temporary keychain; notarizes and staples the app and DMG; verifies the Developer ID release manifest; uploads workflow artifacts; and creates the GitHub release. The temporary certificate and keychain are removed even when a step fails.
 
+The workflow first checks whether every Apple signing secret is configured. When credentials are absent, the readiness job succeeds and the notarized publishing job is skipped instead of leaving a failed workflow. An unsigned or ad-hoc stable GitHub release may then be created manually, provided its release notes clearly disclose that macOS may show an unidentified-developer warning.
+
 Create a GitHub environment named `release`, optionally add required reviewers, and configure these environment or repository secrets:
 
 - `APPLE_DEVELOPER_ID_P12_BASE64`: Base64 representation of the exported Developer ID Application certificate and private key (`.p12`).
