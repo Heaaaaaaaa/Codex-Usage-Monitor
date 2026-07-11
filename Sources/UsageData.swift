@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import SwiftUI
 
@@ -1306,6 +1307,7 @@ final class UsageStore: ObservableObject {
     nonisolated private static func loadLocalUsage(scanDays: Int?, source: UsageScanSource) -> LocalUsageParseResult {
         let index = loadSessionIndex(codexHome: source.codexHome)
         let loadedCache = loadParseCache(
+            index: index,
             indexSignature: sessionIndexSignature(codexHome: source.codexHome),
             source: source
         )
@@ -1351,7 +1353,7 @@ final class UsageStore: ObservableObject {
         }
 
         if cacheChanged {
-            saveParseCache(cache, cacheURL: source.cacheURL)
+            saveParseCache(cache, index: index, cacheURL: source.cacheURL)
         }
 
         return LocalUsageParseResult(
@@ -1427,7 +1429,11 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    nonisolated private static func loadParseCache(indexSignature: String, source: UsageScanSource) -> (cache: UsageParseCache, needsRewrite: Bool) {
+    nonisolated private static func loadParseCache(
+        index: [String: String],
+        indexSignature: String,
+        source: UsageScanSource
+    ) -> (cache: UsageParseCache, needsRewrite: Bool) {
         let empty = UsageParseCache(
             version: Self.parseCacheVersion,
             codexHomePath: source.codexHome.path,
@@ -1440,13 +1446,46 @@ final class UsageStore: ObservableObject {
         guard let data = try? Data(contentsOf: cacheURL) else {
             return (empty, false)
         }
-        guard let cache = try? JSONDecoder().decode(UsageParseCache.self, from: data),
+        guard var cache = try? JSONDecoder().decode(UsageParseCache.self, from: data),
               cache.version == Self.parseCacheVersion,
-              cache.codexHomePath == source.codexHome.path,
-              cache.indexSignature == indexSignature else {
+              cache.codexHomePath == source.codexHome.path else {
             return (empty, true)
         }
-        return (cache, false)
+        guard cache.indexSignature != indexSignature else {
+            return (cache, false)
+        }
+        cache = retitledParseCache(cache, index: index, indexSignature: indexSignature)
+        return (cache, true)
+    }
+
+    nonisolated private static func retitledParseCache(
+        _ cache: UsageParseCache,
+        index: [String: String],
+        indexSignature: String
+    ) -> UsageParseCache {
+        var updated = cache
+        updated.indexSignature = indexSignature
+        updated.files = cache.files.mapValues { cachedFile in
+            var updatedFile = cachedFile
+            updatedFile.entries = cachedFile.entries.map { entry in
+                let chatTitle = index[entry.sessionID] ?? entry.sessionID
+                guard chatTitle != entry.chatTitle else {
+                    return entry
+                }
+                return UsageEntry(
+                    id: entry.id,
+                    timestamp: entry.timestamp,
+                    sessionID: entry.sessionID,
+                    chatTitle: chatTitle,
+                    projectPath: entry.projectPath,
+                    model: entry.model,
+                    tokens: entry.tokens,
+                    sourceFile: entry.sourceFile
+                )
+            }
+            return updatedFile
+        }
+        return updated
     }
 
     nonisolated private static func pruneMissingCacheFiles(in cache: inout UsageParseCache) -> Bool {
@@ -1460,17 +1499,70 @@ final class UsageStore: ObservableObject {
         return true
     }
 
-    nonisolated private static func saveParseCache(_ cache: UsageParseCache, cacheURL: URL?) {
+    nonisolated private static func saveParseCache(
+        _ cache: UsageParseCache,
+        index: [String: String],
+        cacheURL: URL?
+    ) {
         guard let cacheURL else {
             return
         }
         do {
             try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(cache)
+            let lockURL = cacheURL.appendingPathExtension("lock")
+            let lockDescriptor = Darwin.open(lockURL.path, O_CREAT | O_RDWR, mode_t(S_IRUSR | S_IWUSR))
+            guard lockDescriptor >= 0 else {
+                return
+            }
+            defer { Darwin.close(lockDescriptor) }
+            guard Darwin.lockf(lockDescriptor, F_LOCK, 0) == 0 else {
+                return
+            }
+            defer { Darwin.lockf(lockDescriptor, F_ULOCK, 0) }
+
+            var cacheToSave = cache
+            if let existingData = try? Data(contentsOf: cacheURL),
+               let existingCache = try? JSONDecoder().decode(UsageParseCache.self, from: existingData),
+               existingCache.version == cache.version,
+               existingCache.codexHomePath == cache.codexHomePath {
+                cacheToSave = mergedParseCache(cache, existingCache: existingCache, index: index)
+            }
+            let data = try JSONEncoder().encode(cacheToSave)
             try data.write(to: cacheURL, options: .atomic)
         } catch {
             return
         }
+    }
+
+    nonisolated private static func mergedParseCache(
+        _ cache: UsageParseCache,
+        existingCache: UsageParseCache,
+        index: [String: String]
+    ) -> UsageParseCache {
+        let existing = retitledParseCache(
+            existingCache,
+            index: index,
+            indexSignature: cache.indexSignature
+        )
+        let paths = Set(cache.files.keys).union(existing.files.keys)
+        var merged = cache
+        merged.files = [:]
+
+        for path in paths {
+            guard let signature = fileSignature(for: URL(fileURLWithPath: path)) else {
+                continue
+            }
+            if let candidate = cache.files[path], cachedFile(candidate, matches: signature) {
+                merged.files[path] = candidate
+            } else if let candidate = existing.files[path], cachedFile(candidate, matches: signature) {
+                merged.files[path] = candidate
+            }
+        }
+        return merged
+    }
+
+    nonisolated private static func cachedFile(_ cachedFile: CachedSessionFile, matches signature: FileSignature) -> Bool {
+        cachedFile.size == signature.size && cachedFile.modifiedAt == signature.modifiedAt
     }
 
     nonisolated private static func cacheFileSize(cacheURL: URL?) -> UInt64 {

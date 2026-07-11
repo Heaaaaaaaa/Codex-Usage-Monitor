@@ -1548,6 +1548,21 @@ private func testParseCacheReusesAndInvalidatesFiles() throws {
     try requireEqual(secondStore.scanDiagnostics.cachedFileCount, 2, "second parse-cache scan reuses both files")
     try require(secondStore.scanDiagnostics.cacheSizeBytes > 0, "second parse-cache scan records cache size")
 
+    try writeJSONL(codexHome.appendingPathComponent("session_index.jsonl"), [
+        ["id": "019parser-test-session", "thread_name": "Renamed parser fixture"],
+        ["id": "019parser-archive-session", "thread_name": "Renamed archived fixture"],
+        ["id": "019parser-old-session", "thread_name": "Renamed old fixture"]
+    ])
+    let renamedStore = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
+    renamedStore.dateWindow = .sevenDays
+    renamedStore.loadFromDiskSynchronously()
+    try requireEqual(renamedStore.scanDiagnostics.cachedFileCount, 2, "session index changes do not invalidate parsed token files")
+    try requireEqual(
+        renamedStore.entries.first { $0.sessionID == "019parser-test-session" }?.chatTitle,
+        "Renamed parser fixture",
+        "session index changes refresh cached chat titles"
+    )
+
     let sessionFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-019parser-test-session.jsonl")
     let archivedFile = codexHome.appendingPathComponent("archived_sessions/rollout-\(currentDayString(daysAgo: 2))-019parser-archive-session.jsonl")
     try appendJSONL(

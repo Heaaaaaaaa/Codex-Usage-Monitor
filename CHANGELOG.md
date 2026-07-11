@@ -16,6 +16,8 @@
 - Isolated the runtime verifier's Swift module cache and included LaunchServices error codes in failed gate diagnostics.
 - Added public-source scanning and a clean source-archive workflow so removed local paths and machine-local commit metadata are not accidentally published.
 - Made UI state explicitly main-actor owned, kept log parsing off the main thread, and added a warning-free Swift complete-concurrency release gate.
+- Preserved parsed token caches across chat-title index updates, isolated release diagnostics from the live app cache, and merged cache writes under an interprocess lock so concurrent scans cannot repeatedly evict each other.
+- Made direct ZIP and DMG packaging rebuild the app first so stale bundles cannot be archived accidentally.
 
 ## 0.4.0 - 2026-07-11
 

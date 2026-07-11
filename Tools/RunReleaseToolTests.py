@@ -80,6 +80,28 @@ def test_strict_concurrency_gate() -> None:
         require(snippet in makefile, f"strict concurrency gate missing: {snippet}")
 
 
+def test_parse_cache_safeguards() -> None:
+    repo = Path(__file__).resolve().parent.parent
+    makefile = (repo / "Makefile").read_text(encoding="utf-8")
+    usage_data = (repo / "Sources/UsageData.swift").read_text(encoding="utf-8")
+    swift_tests = (repo / "Tools/RunTests.swift").read_text(encoding="utf-8")
+    diagnostic = (repo / "Tools/DumpSummary.swift").read_text(encoding="utf-8")
+    combined = makefile + usage_data + swift_tests + diagnostic
+    required_snippets = [
+        "DIAGNOSTIC_CACHE :=",
+        '"$(DIAGNOSTIC)" "$(abspath $(DIAGNOSTIC_CACHE))"',
+        "CommandLine.arguments.dropFirst().first",
+        "retitledParseCache",
+        "mergedParseCache",
+        "Darwin.lockf",
+        "session index changes do not invalidate parsed token files",
+        "package: all",
+        "package-dmg: all",
+    ]
+    for snippet in required_snippets:
+        require(snippet in combined, f"parse cache safeguard missing: {snippet}")
+
+
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
     version, build, errors = release_version_errors(repo, "v0.4.1")
@@ -310,6 +332,7 @@ def main() -> int:
         ("public bundle identifier validation", test_public_bundle_identifier_validation),
         ("menu bar bundle metadata", test_menu_bar_bundle_metadata),
         ("strict concurrency gate", test_strict_concurrency_gate),
+        ("parse cache safeguards", test_parse_cache_safeguards),
         ("release version validation", test_release_version_validation),
         ("notary keychain command", test_notary_keychain_command),
         ("publish workflow safeguards", test_publish_workflow_safeguards),

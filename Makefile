@@ -48,6 +48,7 @@ ENTITLEMENTS := Resources/Release.entitlements
 DATA_SOURCES := Sources/UsageData.swift
 TEST_DATA_SOURCES := Sources/UsageData.swift Sources/AppSettings.swift
 DIAGNOSTIC := $(BUILD_DIR)/DumpSummary
+DIAGNOSTIC_CACHE := $(BUILD_DIR)/diagnostic-usage-cache.json
 TEST_RUNNER := $(BUILD_DIR)/RunTests
 RUNTIME_VERIFIER := $(BUILD_DIR)/VerifyRuntimePanel
 RELEASE_TOOL_TESTS := Tools/RunReleaseToolTests.py
@@ -164,7 +165,7 @@ verify-source-archive:
 sign: all
 	codesign --force --deep --sign "$(SIGN_IDENTITY)" "$(APP)"
 
-package:
+package: all
 	rm -f "$(RELEASE_ZIP)" "$(ZIP_SHA256)"
 	ditto -c -k --norsrc --keepParent "$(APP)" "$(RELEASE_ZIP)"
 	$(MAKE) checksum-zip
@@ -172,7 +173,7 @@ package:
 
 dmg: all package-dmg
 
-package-dmg:
+package-dmg: all
 	rm -rf "$(DMG_STAGING)"
 	mkdir -p "$(DMG_STAGING)"
 	ditto "$(APP)" "$(DMG_STAGING)/$(APP_NAME).app"
@@ -285,7 +286,7 @@ test: $(TEST_RUNNER) $(RELEASE_TOOL_TESTS)
 	python3 "$(RELEASE_TOOL_TESTS)"
 
 diagnose: $(DIAGNOSTIC)
-	"$(DIAGNOSTIC)"
+	"$(DIAGNOSTIC)" "$(abspath $(DIAGNOSTIC_CACHE))"
 
 $(TEST_RUNNER): $(TEST_DATA_SOURCES) Tools/RunTests.swift
 	mkdir -p "build"

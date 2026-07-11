@@ -10,7 +10,8 @@ struct DumpSummary {
             preferences.removePersistentDomain(forName: suiteName)
         }
 
-        let store = UsageStore(preferences: preferences)
+        let cacheURL = CommandLine.arguments.dropFirst().first.map { URL(fileURLWithPath: $0) }
+        let store = UsageStore(preferences: preferences, cacheURL: cacheURL)
         store.dateWindow = .sevenDays
         store.loadFromDiskSynchronously()
         print(store.diagnosticSummary)
