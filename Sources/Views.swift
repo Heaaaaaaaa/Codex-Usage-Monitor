@@ -2,6 +2,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let showCodexUsageSettings = Notification.Name("CodexUsageMonitor.showSettings")
+    static let codexUsagePopoverDidClose = Notification.Name("CodexUsageMonitor.popoverDidClose")
 }
 
 private enum BreakdownKind: String, CaseIterable, Identifiable {
@@ -82,13 +83,19 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 500, minHeight: 620)
-        .background(AppColor.background)
+        .background(AppColor.background.opacity(0.88))
+        .background(.ultraThinMaterial)
         .foregroundStyle(AppColor.primaryText)
         .onAppear {
             store.refreshIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showCodexUsageSettings)) { _ in
             showSettings(.general)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .codexUsagePopoverDidClose)) { _ in
+            if showingSettings {
+                leaveSettings()
+            }
         }
         .onChange(of: store.rates) { newRates in
             if !showingSettings || selectedSettingsPage != .rates || rateDraft == rateDraftBaseline {
@@ -100,7 +107,7 @@ struct RootView: View {
             if showingSettings {
                 leaveSettings()
             } else {
-                onClose()
+                closePopover()
             }
         }
         .confirmationDialog("Clear Parse Caches?", isPresented: $confirmingClearCache) {
@@ -215,9 +222,6 @@ struct RootView: View {
                 HeaderButton(symbol: "slider.horizontal.3", help: "Settings") {
                     showSettings(.general)
                 }
-            }
-            HeaderButton(symbol: "xmark", help: "Close") {
-                closePanel()
             }
         }
         .padding(.horizontal, 20)
@@ -630,7 +634,7 @@ struct RootView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Show window on launch")
+                        Text("Open popover on launch")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(AppColor.primaryText)
                         Text(appSettings.showWindowOnLaunchDetail)
@@ -650,7 +654,7 @@ struct RootView: View {
                     .toggleStyle(.switch)
                     .labelsHidden()
                     .help(appSettings.showWindowOnLaunchDetail)
-                    .accessibilityLabel("Show window on launch")
+                    .accessibilityLabel("Open popover on launch")
                 }
                 .padding(12)
                 .background(AppColor.row)
@@ -1219,7 +1223,7 @@ struct RootView: View {
         showingSettings = false
     }
 
-    private func closePanel() {
+    private func closePopover() {
         rateDraft = store.rates
         rateDraftBaseline = store.rates
         onClose()

@@ -5,20 +5,21 @@ import SwiftUI
 @preconcurrency import UserNotifications
 
 @MainActor
-final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
+final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSPopoverDelegate {
     private let store = UsageStore()
     private let appSettings = AppSettings()
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let popover = NSPopover()
     private let logWatcher = CodexLogWatcher()
     private let budgetNotifier = BudgetNotificationController()
     private var refreshTimer: Timer?
-    private var window: NSPanel!
+    private var wantsPopoverVisible = false
     private var cancellables: Set<AnyCancellable> = []
 
     override init() {
         super.init()
         NSApp.delegate = self
-        configureWindow()
+        configurePopover()
         configureStatusItem()
         configureMainMenu()
 
@@ -79,58 +80,77 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
     deinit {
         refreshTimer?.invalidate()
         logWatcher.stop()
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
     func show() {
-        window.center()
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(window.contentViewController)
+        wantsPopoverVisible = true
+        presentPopoverWhenReady(attempt: 0)
     }
 
-    func showInitialWindowIfNeeded() {
-        if appSettings.showWindowOnLaunch {
-            show()
+    private func presentPopoverWhenReady(attempt: Int) {
+        guard wantsPopoverVisible, !popover.isShown else {
+            return
+        }
+        guard let button = statusItem.button, button.window != nil else {
+            retryPopoverPresentation(after: attempt)
+            return
+        }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        guard popover.isShown else {
+            retryPopoverPresentation(after: attempt)
+            return
+        }
+        button.highlight(true)
+        NSApp.activate(ignoringOtherApps: true)
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
+    private func retryPopoverPresentation(after attempt: Int) {
+        guard attempt < Self.maximumPopoverPresentationAttempts else {
+            wantsPopoverVisible = false
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.presentPopoverWhenReady(attempt: attempt + 1)
         }
     }
 
-    private func configureWindow() {
+    func showInitialPopoverIfNeeded() {
+        if appSettings.showWindowOnLaunch {
+            DispatchQueue.main.async { [weak self] in
+                self?.show()
+            }
+        }
+    }
+
+    private func configurePopover() {
         let root = RootView(store: store, appSettings: appSettings) { [weak self] in
-            self?.hideWindow()
+            self?.hidePopover()
         }
         let controller = UsageHostingController(rootView: root, store: store)
-        window = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 710),
-            styleMask: [.titled, .closable, .resizable, .utilityWindow],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Codex Usage Monitor"
-        window.contentViewController = controller
-        window.delegate = self
-        window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 500, height: 620)
-        window.hidesOnDeactivate = true
-        window.isFloatingPanel = false
-        window.level = .normal
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(activeApplicationDidChange(_:)),
-            name: NSWorkspace.didActivateApplicationNotification,
-            object: nil
-        )
+        popover.contentViewController = controller
+        popover.contentSize = NSSize(width: 500, height: 710)
+        popover.behavior = .transient
+        popover.animates = true
+        popover.delegate = self
     }
 
     private func configureStatusItem() {
         guard let button = statusItem.button else {
             return
         }
-        button.image = NSImage(systemSymbolName: "chart.bar.xaxis", accessibilityDescription: "Codex Usage")
-        button.image?.isTemplate = true
-        button.imagePosition = .imageLeading
-        button.title = "CX"
+        statusItem.autosaveName = "CodexUsageMonitor.statusItem"
+        if let iconURL = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
+           let icon = NSImage(contentsOf: iconURL) {
+            icon.size = NSSize(width: 18, height: 18)
+            icon.isTemplate = true
+            button.image = icon
+        } else {
+            button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: "Codex Usage")
+            button.image?.isTemplate = true
+        }
+        button.imagePosition = .imageOnly
+        button.title = ""
         button.target = self
         button.action = #selector(statusItemClicked(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -145,7 +165,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         appMenu.addItem(NSMenuItem(title: "About Codex Usage Monitor", action: #selector(showAbout), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Show Codex Usage", action: #selector(showWindow), keyEquivalent: "0"))
+        appMenu.addItem(NSMenuItem(title: "Open Codex Usage", action: #selector(showPopover), keyEquivalent: "0"))
         appMenu.addItem(NSMenuItem(title: "Refresh", action: #selector(refreshUsage), keyEquivalent: "r"))
         appMenu.addItem(makeAutoRefreshMenuItem())
         appMenu.addItem(.separator())
@@ -158,7 +178,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         appMenu.addItem(NSMenuItem(title: "Export Settings...", action: #selector(exportSettings), keyEquivalent: ""))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: ""))
-        appMenu.addItem(NSMenuItem(title: "Show Window on Launch", action: #selector(toggleShowWindowOnLaunch), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "Open Popover on Launch", action: #selector(toggleOpenPopoverOnLaunch), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem(title: "Budget Notifications", action: #selector(toggleBudgetNotifications), keyEquivalent: ""))
         appMenu.addItem(makeDisplayModeMenuItem())
         appMenu.addItem(.separator())
@@ -173,7 +193,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
     private func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
         let snapshotItem = makeSnapshotMenuItem()
-        let showItem = NSMenuItem(title: "Show Codex Usage", action: #selector(showWindow), keyEquivalent: "")
+        let showItem = NSMenuItem(title: "Open Codex Usage", action: #selector(showPopover), keyEquivalent: "")
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: "")
         let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshUsage), keyEquivalent: "")
         let autoRefreshItem = makeAutoRefreshMenuItem()
@@ -186,7 +206,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         let exportSettingsItem = NSMenuItem(title: "Export Settings...", action: #selector(exportSettings), keyEquivalent: "")
         let aboutItem = NSMenuItem(title: "About", action: #selector(showAbout), keyEquivalent: "")
         let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        let showWindowOnLaunchItem = NSMenuItem(title: "Show Window on Launch", action: #selector(toggleShowWindowOnLaunch), keyEquivalent: "")
+        let showWindowOnLaunchItem = NSMenuItem(title: "Open Popover on Launch", action: #selector(toggleOpenPopoverOnLaunch), keyEquivalent: "")
         let budgetNotificationsItem = NSMenuItem(title: "Budget Notifications", action: #selector(toggleBudgetNotifications), keyEquivalent: "")
         let displayModeItem = makeDisplayModeMenuItem()
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "")
@@ -234,6 +254,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
     private func makeDisplayModeMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "Menu Bar Shows", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
+        submenu.addItem(NSMenuItem(title: "Icon Only", action: #selector(showIconOnlyInMenuBar), keyEquivalent: ""))
         submenu.addItem(NSMenuItem(title: "Tokens", action: #selector(showTokensInMenuBar), keyEquivalent: ""))
         submenu.addItem(NSMenuItem(title: "Estimated Cost", action: #selector(showCostInMenuBar), keyEquivalent: ""))
         submenu.addItem(NSMenuItem(title: "Tokens + Est. Cost", action: #selector(showTokensAndCostInMenuBar), keyEquivalent: ""))
@@ -256,46 +277,44 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent, event.type == .rightMouseUp else {
-            toggleWindow()
+            togglePopover()
             return
         }
+        hidePopover()
         statusItem.menu = makeStatusMenu()
         sender.performClick(nil)
         statusItem.menu = nil
     }
 
-    private func toggleWindow() {
-        if window.isVisible {
-            hideWindow()
+    private func togglePopover() {
+        if popover.isShown || wantsPopoverVisible {
+            hidePopover()
         } else {
             show()
         }
     }
 
-    private func hideWindow() {
-        window.orderOut(nil)
-    }
-
-    private func autoHideWindowIfNeeded() {
-        guard window.isVisible,
-              window.attachedSheet == nil,
-              NSApp.modalWindow == nil else {
-            return
-        }
-        hideWindow()
-    }
-
-    private func scheduleAutoHideWindowIfNeeded() {
-        DispatchQueue.main.async { [weak self] in
-            self?.autoHideWindowIfNeeded()
-        }
+    private func hidePopover() {
+        wantsPopoverVisible = false
+        popover.performClose(nil)
+        statusItem.button?.highlight(false)
     }
 
     private func updateStatusTitle() {
         guard let button = statusItem.button else {
             return
         }
-        button.title = appSettings.menuBarTitle(summary: store.summary, pricingCoverage: store.pricingCoverage)
+        let title = appSettings.menuBarTitle(summary: store.summary, pricingCoverage: store.pricingCoverage)
+        let isCompact = appSettings.menuBarDisplayMode == .icon
+        let budgetAlert = appSettings.budgetAlert(summary: store.summary)
+        statusItem.length = isCompact ? NSStatusItem.squareLength : NSStatusItem.variableLength
+        button.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+        button.title = title
+        if isCompact && budgetAlert.isVisible {
+            button.contentTintColor = budgetAlert.level == .exceeded ? .systemRed : .systemOrange
+        } else {
+            button.contentTintColor = nil
+        }
         button.toolTip = statusSnapshotLines().joined(separator: "\n")
     }
 
@@ -351,7 +370,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         budgetNotifier.evaluate(summary: store.summary, settings: appSettings)
     }
 
-    @objc private func showWindow() {
+    @objc private func showPopover() {
         show()
     }
 
@@ -404,12 +423,16 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         appSettings.toggleLaunchAtLogin()
     }
 
-    @objc private func toggleShowWindowOnLaunch() {
+    @objc private func toggleOpenPopoverOnLaunch() {
         appSettings.setShowWindowOnLaunch(!appSettings.showWindowOnLaunch)
     }
 
     @objc private func toggleBudgetNotifications() {
         appSettings.setBudgetNotificationsEnabled(!appSettings.budgetNotificationsEnabled)
+    }
+
+    @objc private func showIconOnlyInMenuBar() {
+        appSettings.setMenuBarDisplayMode(.icon)
     }
 
     @objc private func showTokensInMenuBar() {
@@ -444,30 +467,15 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         NSApp.terminate(nil)
     }
 
-    @objc private func activeApplicationDidChange(_ notification: Notification) {
-        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
-            return
-        }
-        autoHideWindowIfNeeded()
-    }
-
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         show()
         return false
     }
 
-    func applicationDidResignActive(_ notification: Notification) {
-        scheduleAutoHideWindowIfNeeded()
-    }
-
-    func windowDidResignKey(_ notification: Notification) {
-        scheduleAutoHideWindowIfNeeded()
-    }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        hideWindow()
-        return false
+    func popoverDidClose(_ notification: Notification) {
+        wantsPopoverVisible = false
+        statusItem.button?.highlight(false)
+        NotificationCenter.default.post(name: .codexUsagePopoverDidClose, object: nil)
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -477,7 +485,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
             return appSettings.launchAtLoginCanToggle
         }
 
-        if menuItem.action == #selector(toggleShowWindowOnLaunch) {
+        if menuItem.action == #selector(toggleOpenPopoverOnLaunch) {
             menuItem.state = appSettings.showWindowOnLaunch ? .on : .off
             return true
         }
@@ -488,6 +496,8 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
         }
 
         switch menuItem.action {
+        case #selector(showIconOnlyInMenuBar):
+            menuItem.state = appSettings.menuBarDisplayMode == .icon ? .on : .off
         case #selector(showTokensInMenuBar):
             menuItem.state = appSettings.menuBarDisplayMode == .tokens ? .on : .off
         case #selector(showCostInMenuBar):
@@ -508,6 +518,8 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSW
 
         return true
     }
+
+    private static let maximumPopoverPresentationAttempts = 40
 }
 
 @MainActor

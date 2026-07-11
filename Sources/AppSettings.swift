@@ -3,6 +3,7 @@ import Foundation
 import ServiceManagement
 
 enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
+    case icon = "Icon Only"
     case tokens = "Tokens"
     case cost = "Cost"
     case tokensAndCost = "Tokens + Cost"
@@ -11,6 +12,7 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
 
     var displayTitle: String {
         switch self {
+        case .icon: return "Icon Only"
         case .tokens: return "Tokens"
         case .cost: return "Estimated Cost"
         case .tokensAndCost: return "Tokens + Est. Cost"
@@ -19,6 +21,8 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
+        case .icon:
+            return "Uses the least menu bar space"
         case .tokens:
             return "Shows token usage in the menu bar"
         case .cost:
@@ -234,7 +238,7 @@ final class AppSettings: ObservableObject {
     @Published private(set) var launchAtLoginCanToggle = true
     @Published private(set) var launchAtLoginDetail = "Off"
     @Published private(set) var showWindowOnLaunch = true
-    @Published private(set) var menuBarDisplayMode: MenuBarDisplayMode = .tokens
+    @Published private(set) var menuBarDisplayMode: MenuBarDisplayMode = .icon
     @Published private(set) var trendMetric: TrendMetric = .tokens
     @Published private(set) var autoRefreshInterval: AutoRefreshInterval = .oneMinute
     @Published private(set) var budgetNotificationsEnabled = false
@@ -315,7 +319,7 @@ final class AppSettings: ObservableObject {
     }
 
     var showWindowOnLaunchDetail: String {
-        showWindowOnLaunch ? "Window opens when the app starts" : "Starts quietly in the menu bar"
+        showWindowOnLaunch ? "Popover opens when the app starts" : "Starts quietly in the menu bar"
     }
 
     func setMenuBarDisplayMode(_ mode: MenuBarDisplayMode) {
@@ -333,19 +337,24 @@ final class AppSettings: ObservableObject {
         let cost = "\(pricingCoverage.isComplete ? "" : "~")\(UsageStore.currency(summary.cost))"
         let baseTitle: String
         switch menuBarDisplayMode {
+        case .icon:
+            baseTitle = ""
         case .tokens:
-            baseTitle = "CX \(tokens)"
+            baseTitle = tokens
         case .cost:
-            baseTitle = "CX \(cost)"
+            baseTitle = cost
         case .tokensAndCost:
-            baseTitle = "CX \(tokens) / \(cost)"
+            baseTitle = "\(tokens) · \(cost)"
         }
 
         let alert = budgetAlert(summary: summary)
+        guard menuBarDisplayMode != .icon else {
+            return ""
+        }
         guard alert.isVisible else {
             return baseTitle
         }
-        return "\(baseTitle) \(alert.marker)"
+        return baseTitle.isEmpty ? alert.marker : "\(baseTitle) \(alert.marker)"
     }
 
     func statusMenuSnapshotLines(
@@ -543,7 +552,7 @@ final class AppSettings: ObservableObject {
             "Menu bar: \(menuBarDisplayMode.rawValue)",
             "Trend metric: \(trendMetric.rawValue)",
             "Auto refresh: \(autoRefreshInterval.rawValue)",
-            "Window on launch: \(showWindowOnLaunch ? "On" : "Off")",
+            "Popover on launch: \(showWindowOnLaunch ? "On" : "Off")",
             "",
             "[Budgets]",
             "Token: \(tokenBudget.value) - \(tokenBudget.detail)",
@@ -592,7 +601,7 @@ final class AppSettings: ObservableObject {
     static func loadMenuBarDisplayMode(preferences: UserDefaults = .standard) -> MenuBarDisplayMode {
         guard let raw = preferences.string(forKey: menuBarDisplayModeKey),
               let mode = MenuBarDisplayMode(rawValue: raw) else {
-            return .tokens
+            return .icon
         }
         return mode
     }
@@ -662,7 +671,7 @@ final class AppSettings: ObservableObject {
     }
 
     private static let showWindowOnLaunchKey = "showWindowOnLaunch.v1"
-    private static let menuBarDisplayModeKey = "menuBarDisplayMode.v1"
+    private static let menuBarDisplayModeKey = "menuBarDisplayMode.v2"
     private static let trendMetricKey = "trendMetric.v1"
     private static let autoRefreshIntervalKey = "autoRefreshInterval.v1"
     private static let budgetNotificationsEnabledKey = "budgetNotificationsEnabled.v1"

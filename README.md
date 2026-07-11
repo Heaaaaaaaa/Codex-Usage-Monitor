@@ -14,13 +14,13 @@ It reads local Codex JSONL logs from `~/.codex/sessions`, `~/.codex/archived_ses
 
 - Requires macOS 13 or later on Apple silicon or Intel.
 - For public installation, download the notarized DMG from the latest release, open it, and drag **Codex Usage Monitor** to **Applications**.
-- Launch the app once, then click its `CX` menu-bar item to open the dashboard. The default data folder is `~/.codex`; choose another Codex log folder in Settings when needed.
+- Launch the app once, then click its compact menu-bar icon to open the popover. The default data folder is `~/.codex`; choose another Codex log folder in Settings when needed.
 - Release builds do not need network access. Local ad-hoc builds are intended for development and are not a substitute for the Developer ID signed and notarized public DMG.
 
 ## What It Shows
 
-- Menu-bar total for the selected default window.
-- Configurable menu-bar label for tokens, estimated cost, or both.
+- Compact icon-only menu-bar presence by default, designed for crowded menu bars.
+- Optional menu-bar labels for tokens, estimated cost, or both.
 - Right-click menu-bar snapshot for the active filter, token total, estimated cost, budgets, and scan status.
 - Configurable local Codex log folder, with `~/.codex` as the default.
 - Includes recent activity from long-running chats even when their session files were created outside the selected history window.
@@ -50,8 +50,8 @@ It reads local Codex JSONL logs from `~/.codex/sessions`, `~/.codex/archived_ses
 - Local parsed-log cache for fast repeat startup and refresh scans, with deleted-log pruning and a clear-all-caches control.
 - Immutable scan-source snapshots so switching log folders cannot apply stale results from the previous folder.
 - Native launch-at-login toggle through macOS Login Items.
-- Optional quiet startup that keeps the window hidden until you click the menu-bar item.
-- Reopening the already-running app from Finder brings the dashboard back.
+- Optional quiet startup that keeps the popover closed until you click the menu-bar item.
+- Reopening the already-running app from Finder brings the popover back.
 - Configurable auto-refresh interval: off, 1 minute, 5 minutes, or 15 minutes, with debounced local log watching when enabled.
 - Transactional model-rate editing in USD per 1M tokens, including custom add/remove rows with explicit Apply and Revert controls.
 - Built-in OpenAI API standard rate source/date, with a direct pricing link and restore action.
@@ -106,7 +106,7 @@ make source-archive
 python3 Tools/ValidateReleaseVersion.py --repo . --tag v0.4.1
 ```
 
-`make test` runs synthetic usage tests for cost math, pricing source metadata, budget tracking and alerts, diagnostics reports, unpriced-model handling, filtering, recent activity, persisted preferences, startup, refresh throttling, mid-scan source changes, menu-bar display and snapshot behavior, expired limits, calendar-aligned token/cost trends, summary text, CSV export, parse-cache behavior, parse diagnostics, extreme numeric log containment, Codex JSONL parsing, demo-fixture safety, public support metadata, bundle identifier validation, and Developer ID signing-identity validation. `make verify-concurrency` type-checks the app, test harness, and diagnostic tool with Swift complete concurrency checking and treats every warning as an error. `make check` runs that gate, builds the app, runs the tests, runs a bounded 7-day local usage diagnostic with a build-local cache, validates plists, validates the source and bundled privacy manifests, verifies the universal binary slices, and checks the ad-hoc signature. `make verify-runtime` is an interactive macOS smoke test: it launches an isolated instance of the exact built bundle, confirms the panel appears, activates Finder, requires the panel to hide, terminates the isolated instance, and restores the previously focused app. `make verify-release` also rebuilds the zip and DMG, generates the release manifest with privacy, pricing, actual executable architecture metadata, and code-signature metadata, checks both SHA-256 files, verifies the disk image, and verifies the manifest. `make verify-public-release` adds the public gate: the repo must be clean, `BUNDLE_IDENTIFIER` must be a non-placeholder reverse-DNS identifier, the manifest must match the current commit, and `gitDirty` must be false.
+`make test` runs synthetic usage tests for cost math, pricing source metadata, budget tracking and alerts, diagnostics reports, unpriced-model handling, filtering, recent activity, persisted preferences, startup, refresh throttling, mid-scan source changes, menu-bar display and snapshot behavior, expired limits, calendar-aligned token/cost trends, summary text, CSV export, parse-cache behavior, parse diagnostics, extreme numeric log containment, Codex JSONL parsing, demo-fixture safety, public support metadata, bundle identifier validation, and Developer ID signing-identity validation. `make verify-concurrency` type-checks the app, test harness, and diagnostic tool with Swift complete concurrency checking and treats every warning as an error. `make check` runs that gate, builds the app, runs the tests, runs a bounded 7-day local usage diagnostic with a build-local cache, validates plists, validates the source and bundled privacy manifests, verifies the universal binary slices, and checks the ad-hoc signature. `make verify-runtime` is an interactive macOS smoke test: it launches an isolated instance of the exact built bundle, confirms the popover appears, activates Finder, requires the popover to hide, terminates the isolated instance, and restores the previously focused app. `make verify-release` also rebuilds the zip and DMG, generates the release manifest with privacy, pricing, actual executable architecture metadata, and code-signature metadata, checks both SHA-256 files, verifies the disk image, and verifies the manifest. `make verify-public-release` adds the public gate: the repo must be clean, `BUNDLE_IDENTIFIER` must be a non-placeholder reverse-DNS identifier, the manifest must match the current commit, and `gitDirty` must be false.
 
 The GitHub Actions workflow in `.github/workflows/release-check.yml` runs `make verify-public-release`, checks the bundle identifier override path, and uploads the app, zip, DMG, checksums, and manifest as workflow artifacts. The separate credential-gated `.github/workflows/publish-release.yml` workflow turns a matching `v*` tag into a Developer ID signed, notarized, stapled GitHub release.
 

@@ -58,9 +58,25 @@ def test_menu_bar_bundle_metadata() -> None:
     with (repo / "Info.plist").open("rb") as handle:
         info = plistlib.load(handle)
     makefile = (repo / "Makefile").read_text(encoding="utf-8")
+    launcher = (repo / "Sources/Launcher.swift").read_text(encoding="utf-8")
+    icon_tool = (repo / "Tools/MakeAppIcon.py").read_text(encoding="utf-8")
 
     require(info.get("LSUIElement") is True, "menu-bar app must be an LSUIElement agent")
     require("Print :LSUIElement" in makefile, "release verification must enforce LSUIElement")
+    required_snippets = [
+        "NSStatusItem.squareLength",
+        "private let popover = NSPopover()",
+        "popover.behavior = .transient",
+        'forResource: "MenuBarIcon"',
+        "MENU_BAR_ICON := Resources/MenuBarIcon.png",
+        'Contents/Resources/MenuBarIcon.png',
+        "draw_usage_mark",
+    ]
+    combined = makefile + launcher + icon_tool
+    for snippet in required_snippets:
+        require(snippet in combined, f"menu-bar popover safeguard missing: {snippet}")
+    require("NSPanel(" not in launcher, "dashboard must be hosted in a menu-bar popover, not a utility panel")
+    require((repo / "Resources/MenuBarIcon.png").is_file(), "menu-bar template icon must be generated and tracked")
 
 
 def test_strict_concurrency_gate() -> None:
@@ -311,6 +327,7 @@ def test_runtime_panel_verifier() -> None:
         "ModuleCache-runtime",
         '-module-cache-path "$(RUNTIME_MODULE_CACHE)"',
         "CGWindowListCopyWindowInfo",
+        "width.doubleValue >= 250",
         'withBundleIdentifier: "com.apple.finder"',
         "createsNewApplicationInstance = true",
         "kAEReopenApplication",
@@ -324,6 +341,7 @@ def test_runtime_panel_verifier() -> None:
     combined = makefile + verifier
     for snippet in required_snippets:
         require(snippet in combined, f"runtime panel verifier missing: {snippet}")
+    require("kCGWindowLayer" not in verifier, "runtime verifier must not exclude AppKit popover window layers")
 
 
 def main() -> int:

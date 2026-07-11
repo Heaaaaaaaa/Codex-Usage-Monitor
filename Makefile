@@ -40,9 +40,10 @@ DIAG_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-diagnose
 TEST_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-tests
 RUNTIME_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-runtime
 CONCURRENCY_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-concurrency
-SOURCES := $(wildcard Sources/*.swift)
-BUNDLE_RESOURCES := Resources/AppIcon.icns Resources/PrivacyInfo.xcprivacy
 APP_ICON := Resources/AppIcon.icns
+MENU_BAR_ICON := Resources/MenuBarIcon.png
+SOURCES := $(wildcard Sources/*.swift)
+BUNDLE_RESOURCES := $(APP_ICON) $(MENU_BAR_ICON) Resources/PrivacyInfo.xcprivacy
 PRIVACY_MANIFEST := Resources/PrivacyInfo.xcprivacy
 ENTITLEMENTS := Resources/Release.entitlements
 DATA_SOURCES := Sources/UsageData.swift
@@ -64,9 +65,9 @@ SIGNATURE_POLICY ?= any
 
 all: $(EXECUTABLE)
 
-assets: $(APP_ICON)
+assets: $(APP_ICON) $(MENU_BAR_ICON)
 
-$(APP_ICON): Tools/MakeAppIcon.py
+$(APP_ICON) $(MENU_BAR_ICON): Tools/MakeAppIcon.py
 	python3 Tools/MakeAppIcon.py
 
 prepare-info-plist: Info.plist Makefile
@@ -251,9 +252,12 @@ verify-app: all
 	plutil -lint "$(APP)/Contents/Info.plist" "$(PRIVACY_MANIFEST)"
 	plutil -lint "$(ENTITLEMENTS)"
 	test -f "$(APP)/Contents/Resources/AppIcon.icns"
+	test -f "$(APP)/Contents/Resources/MenuBarIcon.png"
 	test -f "$(APP)/Contents/Resources/PrivacyInfo.xcprivacy"
 	test "$$(sips -g pixelWidth "$(APP)/Contents/Resources/AppIcon.icns" | awk '/pixelWidth/ { print $$2 }')" = "1024"
 	test "$$(sips -g pixelHeight "$(APP)/Contents/Resources/AppIcon.icns" | awk '/pixelHeight/ { print $$2 }')" = "1024"
+	test "$$(sips -g pixelWidth "$(APP)/Contents/Resources/MenuBarIcon.png" | awk '/pixelWidth/ { print $$2 }')" = "36"
+	test "$$(sips -g pixelHeight "$(APP)/Contents/Resources/MenuBarIcon.png" | awk '/pixelHeight/ { print $$2 }')" = "36"
 	python3 Tools/ValidatePrivacyManifest.py "$(PRIVACY_MANIFEST)" "$(APP)/Contents/Resources/PrivacyInfo.xcprivacy"
 	xcrun lipo "$(EXECUTABLE)" -verify_arch arm64 x86_64
 	codesign --verify --deep --strict --verbose=2 "$(APP)"

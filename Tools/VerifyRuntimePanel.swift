@@ -59,13 +59,12 @@ private func visiblePanelCount(for processIdentifier: pid_t) -> Int {
     return windows.filter { window in
         guard let owner = window[kCGWindowOwnerPID as String] as? NSNumber,
               owner.int32Value == processIdentifier,
-              let layer = window[kCGWindowLayer as String] as? NSNumber,
-              layer.intValue == 0,
               let bounds = window[kCGWindowBounds as String] as? [String: Any],
+              let width = bounds["Width"] as? NSNumber,
               let height = bounds["Height"] as? NSNumber else {
             return false
         }
-        return height.doubleValue >= 100
+        return width.doubleValue >= 250 && height.doubleValue >= 100
     }.count
 }
 

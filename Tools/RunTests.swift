@@ -1189,7 +1189,7 @@ private func testAppSettingsPersistStartupPreference() throws {
 
     let firstSettings = AppSettings(preferences: preferences, refreshLoginStatus: false)
     try requireEqual(firstSettings.showWindowOnLaunch, true, "initial startup window setting")
-    try requireEqual(firstSettings.showWindowOnLaunchDetail, "Window opens when the app starts", "initial startup detail")
+    try requireEqual(firstSettings.showWindowOnLaunchDetail, "Popover opens when the app starts", "initial startup detail")
     try requireEqual(firstSettings.trendMetric, .tokens, "default trend metric")
 
     firstSettings.setShowWindowOnLaunch(false)
@@ -1213,19 +1213,22 @@ private func testAppSettingsPersistStartupPreference() throws {
         eventCount: 3
     )
 
-    try requireEqual(thirdSettings.menuBarDisplayMode, .tokens, "default menu bar display mode")
-    try requireEqual(thirdSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "CX 123.5K", "token menu bar title")
+    try requireEqual(thirdSettings.menuBarDisplayMode, .icon, "default compact menu bar display mode")
+    try requireEqual(thirdSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "", "icon-only menu bar title")
+    try requireEqual(thirdSettings.menuBarDisplayMode.detail, "Uses the least menu bar space", "compact menu bar detail")
 
+    thirdSettings.setMenuBarDisplayMode(.tokens)
+    try requireEqual(thirdSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "123.5K", "token menu bar title")
     thirdSettings.setMenuBarDisplayMode(.cost)
-    try requireEqual(thirdSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "CX $12.34", "cost menu bar title")
+    try requireEqual(thirdSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "$12.34", "cost menu bar title")
 
     let fourthSettings = AppSettings(preferences: preferences, refreshLoginStatus: false)
     try requireEqual(fourthSettings.menuBarDisplayMode, .cost, "saved menu bar display mode")
 
     fourthSettings.setMenuBarDisplayMode(.tokensAndCost)
-    try requireEqual(fourthSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "CX 123.5K / $12.34", "token and cost menu bar title")
+    try requireEqual(fourthSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "123.5K · $12.34", "token and cost menu bar title")
     let partialCoverage = PricingCoverage(pricedTokens: 75_000, observedTokens: 123_456)
-    try requireEqual(fourthSettings.menuBarTitle(summary: summary, pricingCoverage: partialCoverage), "CX 123.5K / ~$12.34", "menu bar marks incomplete cost")
+    try requireEqual(fourthSettings.menuBarTitle(summary: summary, pricingCoverage: partialCoverage), "123.5K · ~$12.34", "menu bar marks incomplete cost")
 
     try requireEqual(fourthSettings.autoRefreshInterval, .oneMinute, "default auto-refresh interval")
     try requireApprox(fourthSettings.autoRefreshInterval.seconds ?? -1, 60, "default auto-refresh seconds")
@@ -1297,14 +1300,16 @@ private func testBudgetSettingsAndStatus() throws {
     try requireEqual(warningAlert.marker, "!", "budget warning marker")
     try requireEqual(warningAlert.title, "Budget near limit", "budget warning title")
     try requireEqual(warningAlert.detail, "Token budget 80% - 2.0K of 2.5K tokens", "budget warning detail")
-    try requireEqual(alertSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "CX 2.0K !", "warning marker in menu bar title")
+    try requireEqual(alertSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "", "icon-only mode stays compact during a warning")
+    alertSettings.setMenuBarDisplayMode(.tokens)
+    try requireEqual(alertSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "2.0K !", "warning marker in token menu bar title")
 
     alertSettings.setTokenBudgetLimit(1_000)
     let exceededAlert = alertSettings.budgetAlert(summary: summary)
     try requireEqual(exceededAlert.level, .exceeded, "budget exceeded level")
     try requireEqual(exceededAlert.marker, "!!", "budget exceeded marker")
     try requireEqual(exceededAlert.detail, "Token budget 200% - 2.0K of 1.0K tokens", "budget exceeded detail")
-    try requireEqual(alertSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "CX 2.0K !!", "exceeded marker in menu bar title")
+    try requireEqual(alertSettings.menuBarTitle(summary: summary, pricingCoverage: .empty), "2.0K !!", "exceeded marker in menu bar title")
 
     reloaded.setTokenBudgetLimit(1_000)
     reloaded.setCostBudgetLimit(1.0)
@@ -1499,7 +1504,8 @@ private func testDiagnosticReportIncludesSupportContext() throws {
     try require(report.contains("[Health]"), "diagnostic report health section")
     try require(report.contains("Ready"), "diagnostic report health status")
     try require(report.contains("[Display]"), "diagnostic report display section")
-    try require(report.contains("Menu bar: Tokens"), "diagnostic report menu bar mode")
+    try require(report.contains("Menu bar: Icon Only"), "diagnostic report menu bar mode")
+    try require(report.contains("Popover on launch: On"), "diagnostic report popover startup setting")
     try require(report.contains("Auto refresh: 1 min"), "diagnostic report refresh interval")
     try require(report.contains("Token: 50% - 1.8K of 3.6K tokens"), "diagnostic report token budget")
     try require(report.contains("Cost: 1% - $0.01 of $1.00"), "diagnostic report cost budget")

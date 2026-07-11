@@ -12,13 +12,13 @@ make verify-release
 
 This runs Swift complete concurrency checking with warnings treated as errors, builds the universal app, runs tests, validates plists and privacy manifests, verifies the app signature, creates the zip and DMG, writes SHA-256 checksum files, verifies the DMG, and verifies the release manifest, including the actual executable architectures and code-signature metadata.
 
-In a logged-in macOS desktop session, verify the transient menu-bar panel behavior separately:
+In a logged-in macOS desktop session, verify the transient menu-bar popover behavior separately:
 
 ```bash
 make verify-runtime
 ```
 
-This launches an isolated instance of the exact built bundle, confirms its panel appears, activates Finder, requires the panel to disappear, terminates the isolated instance, and restores the previously focused app.
+This launches an isolated instance of the exact built bundle, confirms its popover appears, activates Finder, requires the popover to disappear, terminates the isolated instance, and restores the previously focused app.
 
 For a public upload candidate, run the stricter gate after committing your source changes:
 

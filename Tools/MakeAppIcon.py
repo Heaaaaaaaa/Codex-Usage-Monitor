@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from math import cos, radians, sin
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -6,7 +7,8 @@ from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
 ICONSET = ROOT / "build" / "AppIcon.iconset"
-OUTPUT = ROOT / "Resources" / "AppIcon.icns"
+APP_ICON = ROOT / "Resources" / "AppIcon.icns"
+MENU_BAR_ICON = ROOT / "Resources" / "MenuBarIcon.png"
 
 ICON_SPECS = [
     (16, "icon_16x16.png"),
@@ -22,86 +24,149 @@ ICON_SPECS = [
 ]
 
 
-def rounded_mask(size: int, radius: int) -> Image.Image:
+def rounded_mask(size: int, bounds: tuple[int, int, int, int], radius: int) -> Image.Image:
     mask = Image.new("L", (size, size), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.rounded_rectangle((0, 0, size, size), radius=radius, fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle(bounds, radius=radius, fill=255)
     return mask
 
 
-def draw_icon(size: int) -> Image.Image:
-    scale = size / 1024
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    mask = rounded_mask(size, int(218 * scale))
+def interpolate(start: int, end: int, amount: float) -> int:
+    return round(start + (end - start) * amount)
 
-    bg = Image.new("RGBA", (size, size))
-    pixels = bg.load()
+
+def diagonal_gradient(size: int) -> Image.Image:
+    start = (49, 133, 255)
+    end = (15, 62, 174)
+    image = Image.new("RGBA", (size, size))
+    pixels = image.load()
     for y in range(size):
         for x in range(size):
-            t = (x * 0.58 + y * 0.42) / size
-            r = int(28 + 22 * t)
-            g = int(36 + 40 * t)
-            b = int(52 + 72 * t)
-            pixels[x, y] = (r, g, b, 255)
+            amount = min(max((x * 0.34 + y * 0.66) / size, 0), 1)
+            pixels[x, y] = (
+                interpolate(start[0], end[0], amount),
+                interpolate(start[1], end[1], amount),
+                interpolate(start[2], end[2], amount),
+                255,
+            )
+    return image
 
-    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow)
-    glow_draw.ellipse(
-        (int(-110 * scale), int(-90 * scale), int(760 * scale), int(720 * scale)),
-        fill=(106, 122, 238, 72),
-    )
-    glow_draw.ellipse(
-        (int(500 * scale), int(470 * scale), int(1160 * scale), int(1160 * scale)),
-        fill=(58, 190, 133, 54),
-    )
-    bg = Image.alpha_composite(bg, glow.filter(ImageFilter.GaussianBlur(int(34 * scale))))
 
-    image.paste(bg, (0, 0), mask)
+def draw_round_arc(
+    image: Image.Image,
+    bounds: tuple[int, int, int, int],
+    start: float,
+    end: float,
+    width: int,
+    fill: tuple[int, int, int, int],
+) -> None:
     draw = ImageDraw.Draw(image)
-
-    inset = int(116 * scale)
-    card = (inset, inset, size - inset, size - inset)
-    draw.rounded_rectangle(card, radius=int(130 * scale), fill=(20, 25, 35, 218), outline=(255, 255, 255, 28), width=max(1, int(5 * scale)))
-
-    bar_left = int(292 * scale)
-    bar_bottom = int(790 * scale)
-    bar_width = max(1, int(110 * scale))
-    gap = int(55 * scale)
-    heights = [int(210 * scale), int(360 * scale), int(500 * scale)]
-    colors = [(77, 145, 232, 255), (224, 156, 63, 255), (59, 190, 132, 255)]
-    for i, height in enumerate(heights):
-        x0 = bar_left + i * (bar_width + gap)
-        y0 = bar_bottom - height
-        draw.rounded_rectangle(
-            (x0, y0, x0 + bar_width, bar_bottom),
-            radius=int(34 * scale),
-            fill=colors[i],
+    draw.arc(bounds, start=start, end=end, fill=fill, width=width)
+    center_x = (bounds[0] + bounds[2]) / 2
+    center_y = (bounds[1] + bounds[3]) / 2
+    radius = (bounds[2] - bounds[0]) / 2
+    cap_radius = width / 2
+    for angle in (start, end):
+        x = center_x + radius * cos(radians(angle))
+        y = center_y + radius * sin(radians(angle))
+        draw.ellipse(
+            (x - cap_radius, y - cap_radius, x + cap_radius, y + cap_radius),
+            fill=fill,
         )
 
-    border = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    border_draw = ImageDraw.Draw(border)
-    border_draw.rounded_rectangle(
-        (int(4 * scale), int(4 * scale), size - int(4 * scale), size - int(4 * scale)),
-        radius=int(214 * scale),
-        outline=(255, 255, 255, 46),
-        width=max(1, int(6 * scale)),
+
+def draw_usage_mark(
+    image: Image.Image,
+    bounds: tuple[int, int, int, int],
+    width: int,
+    ring: tuple[int, int, int, int],
+    token: tuple[int, int, int, int],
+) -> None:
+    draw_round_arc(image, bounds, start=42, end=318, width=width, fill=ring)
+    center_y = (bounds[1] + bounds[3]) / 2
+    token_x = bounds[2] + width * 0.20
+    token_radius = width * 0.52
+    ImageDraw.Draw(image).ellipse(
+        (
+            token_x - token_radius,
+            center_y - token_radius,
+            token_x + token_radius,
+            center_y + token_radius,
+        ),
+        fill=token,
     )
-    return Image.alpha_composite(image, border)
+
+
+def draw_app_icon() -> Image.Image:
+    size = 1024
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    squircle = (64, 52, 960, 948)
+    mask = rounded_mask(size, squircle, 214)
+
+    shadow_mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(shadow_mask).rounded_rectangle((72, 76, 952, 956), radius=210, fill=90)
+    shadow = Image.new("RGBA", (size, size), (1, 8, 25, 0))
+    shadow.putalpha(shadow_mask.filter(ImageFilter.GaussianBlur(28)))
+    canvas = Image.alpha_composite(canvas, shadow)
+
+    background = diagonal_gradient(size)
+    canvas.paste(background, (0, 0), mask)
+
+    highlight = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    highlight_draw = ImageDraw.Draw(highlight)
+    highlight_draw.rounded_rectangle(
+        (78, 66, 946, 934),
+        radius=202,
+        outline=(255, 255, 255, 32),
+        width=6,
+    )
+    canvas = Image.alpha_composite(canvas, highlight)
+
+    mark_shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw_usage_mark(
+        mark_shadow,
+        (242, 230, 770, 758),
+        108,
+        (1, 24, 83, 108),
+        (1, 24, 83, 108),
+    )
+    mark_shadow = mark_shadow.filter(ImageFilter.GaussianBlur(18))
+    canvas = Image.alpha_composite(canvas, mark_shadow)
+
+    mark = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw_usage_mark(
+        mark,
+        (242, 212, 770, 740),
+        108,
+        (248, 251, 255, 255),
+        (105, 232, 184, 255),
+    )
+    return Image.alpha_composite(canvas, mark)
+
+
+def draw_menu_bar_icon() -> Image.Image:
+    source_size = 144
+    image = Image.new("RGBA", (source_size, source_size), (0, 0, 0, 0))
+    draw_usage_mark(
+        image,
+        (29, 25, 107, 103),
+        18,
+        (0, 0, 0, 255),
+        (0, 0, 0, 255),
+    )
+    return image.resize((36, 36), Image.Resampling.LANCZOS)
 
 
 def main() -> None:
     ICONSET.mkdir(parents=True, exist_ok=True)
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    largest_icon = None
+    APP_ICON.parent.mkdir(parents=True, exist_ok=True)
+
+    master = draw_app_icon()
     for size, filename in ICON_SPECS:
-        icon = draw_icon(size)
-        icon.save(ICONSET / filename)
-        if size == 1024:
-            largest_icon = icon
-    if largest_icon is None:
-        largest_icon = draw_icon(1024)
-    largest_icon.save(OUTPUT, format="ICNS")
-    print(OUTPUT)
+        master.resize((size, size), Image.Resampling.LANCZOS).save(ICONSET / filename)
+    master.save(APP_ICON, format="ICNS")
+    draw_menu_bar_icon().save(MENU_BAR_ICON)
+    print(APP_ICON)
+    print(MENU_BAR_ICON)
 
 
 if __name__ == "__main__":

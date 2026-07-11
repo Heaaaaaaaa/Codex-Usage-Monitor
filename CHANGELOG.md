@@ -18,6 +18,9 @@
 - Made UI state explicitly main-actor owned, kept log parsing off the main thread, and added a warning-free Swift complete-concurrency release gate.
 - Preserved parsed token caches across chat-title index updates, isolated release diagnostics from the live app cache, and merged cache writes under an interprocess lock so concurrent scans cannot repeatedly evict each other.
 - Made direct ZIP and DMG packaging rebuild the app first so stale bundles cannot be archived accidentally.
+- Replaced the detached utility window with a transient menu-bar popover that anchors under the status icon and closes naturally when focus moves elsewhere.
+- Added a migrated icon-only menu-bar mode to minimize space on crowded menu bars while retaining optional token and cost labels.
+- Replaced the chart artwork with a unified cobalt usage mark for the app icon and a matching monochrome menu-bar template.
 
 ## 0.4.0 - 2026-07-11
 
