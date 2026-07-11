@@ -14,6 +14,7 @@ from ReleasePreflight import developer_id_identity_error, notary_history_command
 from ValidateBundleIdentifier import public_bundle_identifier_error
 from ValidatePublicSource import archive_errors, history_errors, snapshot_errors
 from ValidateReleaseVersion import release_version_errors
+from VerifyDiskImage import verify_disk_image
 
 
 def require(condition: bool, message: str) -> None:
@@ -344,6 +345,42 @@ def test_runtime_panel_verifier() -> None:
     require("kCGWindowLayer" not in verifier, "runtime verifier must not exclude AppKit popover window layers")
 
 
+def test_disk_image_verifier_retries() -> None:
+    repo = Path(__file__).resolve().parent.parent
+    makefile = (repo / "Makefile").read_text(encoding="utf-8")
+    require(
+        'python3 "$(DMG_VERIFIER)" "$(RELEASE_DMG)"' in makefile,
+        "release verification must use the retrying DMG verifier",
+    )
+
+    exit_codes = iter([1, 0])
+    commands: list[list[str]] = []
+    delays: list[float] = []
+    messages: list[str] = []
+
+    def runner(command: list[str]) -> int:
+        commands.append(command)
+        return next(exit_codes)
+
+    result = verify_disk_image(
+        Path("/tmp/release.dmg"),
+        attempts=3,
+        delay=0.25,
+        runner=runner,
+        sleeper=delays.append,
+        logger=messages.append,
+    )
+    require_equal(result, 0, "transient DMG verification recovers")
+    require_equal(len(commands), 2, "DMG verification retries once")
+    require_equal(delays, [0.25], "DMG verification uses bounded backoff")
+    require_equal(len(messages), 1, "DMG retry is reported")
+    require_equal(
+        commands[0],
+        ["hdiutil", "verify", "/tmp/release.dmg"],
+        "DMG verifier command",
+    )
+
+
 def main() -> int:
     tests = [
         ("Developer ID identity validation", test_developer_id_identity_validation),
@@ -359,6 +396,7 @@ def main() -> int:
         ("public support metadata", test_public_support_metadata),
         ("public source safety", test_public_source_safety),
         ("runtime panel verifier", test_runtime_panel_verifier),
+        ("disk image verifier retries", test_disk_image_verifier_retries),
     ]
     failures: list[str] = []
     for name, test in tests:

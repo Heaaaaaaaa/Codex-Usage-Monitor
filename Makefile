@@ -55,6 +55,7 @@ RUNTIME_VERIFIER := $(BUILD_DIR)/VerifyRuntimePanel
 RELEASE_TOOL_TESTS := Tools/RunReleaseToolTests.py
 RELEASE_VERSION_VALIDATOR := Tools/ValidateReleaseVersion.py
 PUBLIC_SOURCE_VALIDATOR := Tools/ValidatePublicSource.py
+DMG_VERIFIER := Tools/VerifyDiskImage.py
 DEMO_OUT ?= $(BUILD_DIR)/demo-codex-home
 SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
@@ -273,7 +274,7 @@ verify-artifacts:
 	test -f "$(MANIFEST)"
 	cd "$(OUT_DIR)" && shasum -a 256 -c "$(ZIP_SHA256_NAME)"
 	cd "$(OUT_DIR)" && shasum -a 256 -c "$(DMG_SHA256_NAME)"
-	hdiutil verify "$(RELEASE_DMG)"
+	python3 "$(DMG_VERIFIER)" "$(RELEASE_DMG)"
 	$(MAKE) verify-manifest
 
 verify-public-artifacts: require-clean-repo verify-artifacts
