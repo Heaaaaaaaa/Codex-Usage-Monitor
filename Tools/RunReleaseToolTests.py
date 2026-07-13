@@ -121,13 +121,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.4.1")
-    require_equal(version, "0.4.1", "release version")
-    require_equal(build, "5", "release build")
+    version, build, errors = release_version_errors(repo, "v0.4.2")
+    require_equal(version, "0.4.2", "release version")
+    require_equal(build, "6", "release build")
     require_equal(errors, [], "live release metadata validates")
 
-    _, _, bad_tag_errors = release_version_errors(repo, "v0.4.2")
-    require(any("release tag must be v0.4.1" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
+    require(any("release tag must be v0.4.2" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)

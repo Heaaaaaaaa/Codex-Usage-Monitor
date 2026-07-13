@@ -364,27 +364,39 @@ struct RootView: View {
 
     private func limitsContent(now: Date) -> some View {
         let snapshot = store.latestLimits
-        let primaryDisplay = UsageStore.windowLimitDisplay(snapshot?.primary, snapshotSeenAt: snapshot?.seenAt, now: now)
-        let secondaryDisplay = UsageStore.windowLimitDisplay(snapshot?.secondary, snapshotSeenAt: snapshot?.seenAt, now: now)
+        let windows = snapshot?.reportedWindows ?? []
         let resetDisplay = UsageStore.resetCreditDisplay(snapshot, now: now)
 
         return VStack(alignment: .leading, spacing: 10) {
             SectionTitle("Limits")
             HStack(spacing: 8) {
-                LimitTile(
-                    symbol: "clock",
-                    title: "5-hour",
-                    value: primaryDisplay.value,
-                    detail: primaryDisplay.detail,
-                    color: primaryDisplay.isExpired ? AppColor.tertiaryText : AppColor.accent
-                )
-                LimitTile(
-                    symbol: "calendar",
-                    title: "Weekly",
-                    value: secondaryDisplay.value,
-                    detail: secondaryDisplay.detail,
-                    color: secondaryDisplay.isExpired ? AppColor.tertiaryText : AppColor.green
-                )
+                if windows.isEmpty {
+                    LimitTile(
+                        symbol: "gauge",
+                        title: "Usage",
+                        value: "No data",
+                        detail: snapshot == nil ? "No local snapshot" : "No window reported",
+                        color: AppColor.tertiaryText
+                    )
+                } else {
+                    ForEach(Array(windows.indices), id: \.self) { index in
+                        let limit = windows[index]
+                        let display = UsageStore.windowLimitDisplay(
+                            limit,
+                            snapshotSeenAt: snapshot?.seenAt,
+                            now: now
+                        )
+                        LimitTile(
+                            symbol: limit.kind.symbol,
+                            title: limit.kind.title,
+                            value: display.value,
+                            detail: display.detail,
+                            color: display.isExpired
+                                ? AppColor.tertiaryText
+                                : (limit.kind.usesCalendarColor ? AppColor.green : AppColor.accent)
+                        )
+                    }
+                }
                 LimitTile(
                     symbol: "plus",
                     title: "Resets",

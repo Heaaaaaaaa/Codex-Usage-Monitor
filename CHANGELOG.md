@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 - 2026-07-13
+
+- Identified rate-limit cards from each snapshot's reported window duration instead of assuming the primary slot is always five hours and the secondary slot is always weekly.
+- Adapted the Limits row to weekly-only and future window combinations, hiding unreported windows and restoring them automatically when Codex reports them again.
+- Added regression coverage for weekly-only, reversed, daily, multi-day, hourly, minute, and invalid rate-limit windows.
+
 ## 0.4.1 - 2026-07-11
 
 - Refreshed the synthetic public screenshots with complete cursor-free dashboard and Rates captures.

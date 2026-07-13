@@ -1183,6 +1183,45 @@ private func testWindowLimitExpiryDisplay() throws {
 }
 
 @MainActor
+private func testRateLimitWindowClassification() throws {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let fiveHour = WindowLimit(usedPercent: 20, windowMinutes: 300, resetsAt: nil)
+    let weekly = WindowLimit(usedPercent: 40, windowMinutes: 10_080, resetsAt: nil)
+
+    try requireEqual(fiveHour.kind, .fiveHour, "five-hour window classification")
+    try requireEqual(fiveHour.kind.title, "5-hour", "five-hour window title")
+    try requireEqual(fiveHour.kind.symbol, "clock", "five-hour window symbol")
+    try requireEqual(weekly.kind, .weekly, "weekly window classification")
+    try requireEqual(weekly.kind.title, "Weekly", "weekly window title")
+    try requireEqual(weekly.kind.symbol, "calendar", "weekly window symbol")
+    try requireEqual(WindowLimit(usedPercent: 0, windowMinutes: 1_440, resetsAt: nil).kind.title, "Daily", "daily window title")
+    try requireEqual(WindowLimit(usedPercent: 0, windowMinutes: 43_200, resetsAt: nil).kind.title, "30-day", "30-day window title")
+    try requireEqual(WindowLimit(usedPercent: 0, windowMinutes: 720, resetsAt: nil).kind.title, "12-hour", "custom hour window title")
+    try requireEqual(WindowLimit(usedPercent: 0, windowMinutes: 90, resetsAt: nil).kind.title, "90-minute", "custom minute window title")
+    try requireEqual(WindowLimit(usedPercent: 0, windowMinutes: 0, resetsAt: nil).kind, .unknown, "invalid window classification")
+
+    let weeklyOnly = RateLimitSnapshot(
+        seenAt: now,
+        planType: "prolite",
+        primary: weekly,
+        secondary: nil,
+        resetCreditsDescription: "No reset credits in latest local snapshot"
+    )
+    try requireEqual(weeklyOnly.reportedWindows.map(\.windowMinutes), [10_080], "weekly-only snapshot preserves reported window")
+    try requireEqual(weeklyOnly.reportedWindows.first?.kind.title, "Weekly", "weekly-only primary is not mislabeled")
+
+    let reversed = RateLimitSnapshot(
+        seenAt: now,
+        planType: "prolite",
+        primary: weekly,
+        secondary: fiveHour,
+        resetCreditsDescription: "No reset credits in latest local snapshot"
+    )
+    try requireEqual(reversed.reportedWindows.map(\.windowMinutes), [300, 10_080], "reported windows sort by duration")
+    try requireEqual(reversed.reportedWindows.map { $0.kind.title }, ["5-hour", "Weekly"], "reordered payload keeps truthful labels")
+}
+
+@MainActor
 private func testAppSettingsPersistStartupPreference() throws {
     let preferences = isolatedPreferences()
     try requireEqual(AppSettings.loadShowWindowOnLaunch(preferences: preferences), true, "default startup window setting")
@@ -1958,6 +1997,7 @@ private struct RunTests {
             ("scan source consistency", testChangingCodexHomeRejectsStaleScanResults),
             ("reset-credit display", testResetCreditDisplay),
             ("window limit expiry display", testWindowLimitExpiryDisplay),
+            ("rate-limit window classification", testRateLimitWindowClassification),
             ("app startup preference", testAppSettingsPersistStartupPreference),
             ("budget settings", testBudgetSettingsAndStatus),
             ("settings import export", testSettingsConfigurationImportExport),

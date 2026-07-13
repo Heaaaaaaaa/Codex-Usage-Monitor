@@ -43,10 +43,14 @@ struct UsageEntry: Codable, Identifiable, Hashable {
     let sourceFile: String
 }
 
-struct WindowLimit: Codable {
+struct WindowLimit: Codable, Equatable {
     var usedPercent: Double
     var windowMinutes: Int
     var resetsAt: Date?
+
+    var kind: WindowLimitKind {
+        WindowLimitKind(windowMinutes: windowMinutes)
+    }
 }
 
 struct RateLimitSnapshot: Codable {
@@ -56,6 +60,84 @@ struct RateLimitSnapshot: Codable {
     var secondary: WindowLimit?
     var resetCreditsDescription: String
     var resetCredits: [ResetCredit] = []
+
+    var reportedWindows: [WindowLimit] {
+        [primary, secondary]
+            .compactMap { $0 }
+            .sorted { lhs, rhs in
+                let lhsMinutes = lhs.windowMinutes > 0 ? lhs.windowMinutes : Int.max
+                let rhsMinutes = rhs.windowMinutes > 0 ? rhs.windowMinutes : Int.max
+                return lhsMinutes < rhsMinutes
+            }
+    }
+}
+
+enum WindowLimitKind: Equatable {
+    case fiveHour
+    case daily
+    case weekly
+    case days(Int)
+    case hours(Int)
+    case minutes(Int)
+    case unknown
+
+    init(windowMinutes: Int) {
+        switch windowMinutes {
+        case 300:
+            self = .fiveHour
+        case 1_440:
+            self = .daily
+        case 10_080:
+            self = .weekly
+        case let minutes where minutes > 0 && minutes.isMultiple(of: 1_440):
+            self = .days(minutes / 1_440)
+        case let minutes where minutes > 0 && minutes.isMultiple(of: 60):
+            self = .hours(minutes / 60)
+        case let minutes where minutes > 0:
+            self = .minutes(minutes)
+        default:
+            self = .unknown
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .fiveHour:
+            return "5-hour"
+        case .daily:
+            return "Daily"
+        case .weekly:
+            return "Weekly"
+        case let .days(days):
+            return "\(days)-day"
+        case let .hours(hours):
+            return "\(hours)-hour"
+        case let .minutes(minutes):
+            return "\(minutes)-minute"
+        case .unknown:
+            return "Usage"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .fiveHour, .hours, .minutes:
+            return "clock"
+        case .daily, .weekly, .days:
+            return "calendar"
+        case .unknown:
+            return "gauge"
+        }
+    }
+
+    var usesCalendarColor: Bool {
+        switch self {
+        case .daily, .weekly, .days:
+            return true
+        case .fiveHour, .hours, .minutes, .unknown:
+            return false
+        }
+    }
 }
 
 struct ResetCredit: Codable, Hashable, Identifiable {

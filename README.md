@@ -13,9 +13,9 @@ It reads local Codex JSONL logs from `~/.codex/sessions`, `~/.codex/archived_ses
 ## Install
 
 - Requires macOS 13 or later on Apple silicon or Intel.
-- For public installation, download the notarized DMG from the latest release, open it, and drag **Codex Usage Monitor** to **Applications**.
+- For public installation, download the DMG from the latest release, open it, and drag **Codex Usage Monitor** to **Applications**.
 - Launch the app once, then click its compact menu-bar icon to open the popover. The default data folder is `~/.codex`; choose another Codex log folder in Settings when needed.
-- Release builds do not need network access. Local ad-hoc builds are intended for development and are not a substitute for the Developer ID signed and notarized public DMG.
+- Release builds do not need network access. Community releases are currently ad-hoc signed and not notarized, so macOS may show a security warning; the release notes identify the signing status of each build.
 
 ## What It Shows
 
@@ -37,7 +37,7 @@ It reads local Codex JSONL logs from `~/.codex/sessions`, `~/.codex/archived_ses
 - Cost mix by non-cached input, cached input, output, and total-only log rows.
 - Daily token or estimated-cost trend for the current filter, with explicit inactive calendar days.
 - Recent activity list for the latest token events in the current filter.
-- 5-hour, weekly, and reset-credit expiry snapshots when Codex has written rate-limit events.
+- Adaptive rate-limit cards labeled from the windows Codex actually reports, including 5-hour, weekly, and reset-credit expiry snapshots when available.
 - Filters for today, 7 days, 30 days, lifetime, project, chat, model, and model breakdown.
 - Project, chat, and model target filters include all local matches, even when the visible breakdown is capped for scanning.
 - Persists the selected time window, scope, target, and editable rates between launches.
@@ -103,7 +103,7 @@ make verify-release
 make verify-public-release BUNDLE_IDENTIFIER=com.yourdomain.codexusagemonitor
 make verify-public-source
 make source-archive
-python3 Tools/ValidateReleaseVersion.py --repo . --tag v0.4.1
+python3 Tools/ValidateReleaseVersion.py --repo . --tag v0.4.2
 ```
 
 `make test` runs synthetic usage tests for cost math, pricing source metadata, budget tracking and alerts, diagnostics reports, unpriced-model handling, filtering, recent activity, persisted preferences, startup, refresh throttling, mid-scan source changes, menu-bar display and snapshot behavior, expired limits, calendar-aligned token/cost trends, summary text, CSV export, parse-cache behavior, parse diagnostics, extreme numeric log containment, Codex JSONL parsing, demo-fixture safety, public support metadata, bundle identifier validation, and Developer ID signing-identity validation. `make verify-concurrency` type-checks the app, test harness, and diagnostic tool with Swift complete concurrency checking and treats every warning as an error. `make check` runs that gate, builds the app, runs the tests, runs a bounded 7-day local usage diagnostic with a build-local cache, validates plists, validates the source and bundled privacy manifests, verifies the universal binary slices, and checks the ad-hoc signature. `make verify-runtime` is an interactive macOS smoke test: it launches an isolated instance of the exact built bundle, confirms the popover appears, activates Finder, requires the popover to hide, terminates the isolated instance, and restores the previously focused app. `make verify-release` also rebuilds the zip and DMG, generates the release manifest with privacy, pricing, actual executable architecture metadata, and code-signature metadata, checks both SHA-256 files, verifies the disk image, and verifies the manifest. `make verify-public-release` adds the public gate: the repo must be clean, `BUNDLE_IDENTIFIER` must be a non-placeholder reverse-DNS identifier, the manifest must match the current commit, and `gitDirty` must be false.
@@ -125,11 +125,11 @@ make verify-public-artifacts
 The distributable artifacts are written to:
 
 ```text
-../../outputs/CodexUsageMonitor-0.4.1.zip
-../../outputs/CodexUsageMonitor-0.4.1.zip.sha256
-../../outputs/CodexUsageMonitor-0.4.1.dmg
-../../outputs/CodexUsageMonitor-0.4.1.dmg.sha256
-../../outputs/CodexUsageMonitor-0.4.1.manifest.json
+../../outputs/CodexUsageMonitor-0.4.2.zip
+../../outputs/CodexUsageMonitor-0.4.2.zip.sha256
+../../outputs/CodexUsageMonitor-0.4.2.dmg
+../../outputs/CodexUsageMonitor-0.4.2.dmg.sha256
+../../outputs/CodexUsageMonitor-0.4.2.manifest.json
 ```
 
 The default release is ad-hoc signed for local testing. The DMG target creates a drag-to-Applications installer image from the current app bundle.
@@ -143,8 +143,8 @@ make verify-release BUNDLE_IDENTIFIER=com.yourname.codexusagemonitor
 Verify downloaded or copied artifacts from the folder containing them:
 
 ```bash
-shasum -a 256 -c CodexUsageMonitor-0.4.1.zip.sha256
-shasum -a 256 -c CodexUsageMonitor-0.4.1.dmg.sha256
+shasum -a 256 -c CodexUsageMonitor-0.4.2.zip.sha256
+shasum -a 256 -c CodexUsageMonitor-0.4.2.dmg.sha256
 ```
 
 ## Developer ID Distribution
