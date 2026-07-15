@@ -64,6 +64,7 @@ struct RootView: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var appSettings: AppSettings
     let onClose: () -> Void
+    let onQuit: () -> Void
 
     @State private var showingSettings = false
     @State private var selectedSettingsPage: SettingsPage = .general
@@ -221,6 +222,9 @@ struct RootView: View {
                 HeaderActionMenu(store: store)
                 HeaderButton(symbol: "slider.horizontal.3", help: "Settings") {
                     showSettings(.general)
+                }
+                HeaderButton(symbol: "power", help: "Quit Codex Usage Monitor") {
+                    onQuit()
                 }
             }
         }

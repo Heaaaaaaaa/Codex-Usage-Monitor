@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4 - 2026-07-15
+
+- Added an accessible power button to the dashboard header so the menu-bar app can be quit directly from its popover.
+
 ## 0.4.3 - 2026-07-15
 
 - Fixed a launch and popover crash caused by exhausting the 256-file LaunchServices descriptor limit while watching recent Codex session logs.

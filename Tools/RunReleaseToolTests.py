@@ -61,6 +61,7 @@ def test_menu_bar_bundle_metadata() -> None:
         info = plistlib.load(handle)
     makefile = (repo / "Makefile").read_text(encoding="utf-8")
     launcher = (repo / "Sources/Launcher.swift").read_text(encoding="utf-8")
+    views = (repo / "Sources/Views.swift").read_text(encoding="utf-8")
     icon_tool = (repo / "Tools/MakeAppIcon.py").read_text(encoding="utf-8")
 
     require(info.get("LSUIElement") is True, "menu-bar app must be an LSUIElement agent")
@@ -73,8 +74,10 @@ def test_menu_bar_bundle_metadata() -> None:
         "MENU_BAR_ICON := Resources/MenuBarIcon.png",
         'Contents/Resources/MenuBarIcon.png',
         "draw_usage_mark",
+        'HeaderButton(symbol: "power", help: "Quit Codex Usage Monitor")',
+        "let onQuit: () -> Void",
     ]
-    combined = makefile + launcher + icon_tool
+    combined = makefile + launcher + views + icon_tool
     for snippet in required_snippets:
         require(snippet in combined, f"menu-bar popover safeguard missing: {snippet}")
     require("NSPanel(" not in launcher, "dashboard must be hosted in a menu-bar popover, not a utility panel")
@@ -127,13 +130,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.4.3")
-    require_equal(version, "0.4.3", "release version")
-    require_equal(build, "7", "release build")
+    version, build, errors = release_version_errors(repo, "v0.4.4")
+    require_equal(version, "0.4.4", "release version")
+    require_equal(build, "8", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.4.3" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.4.4" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)

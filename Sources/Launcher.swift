@@ -124,9 +124,16 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
     }
 
     private func configurePopover() {
-        let root = RootView(store: store, appSettings: appSettings) { [weak self] in
-            self?.hidePopover()
-        }
+        let root = RootView(
+            store: store,
+            appSettings: appSettings,
+            onClose: { [weak self] in
+                self?.hidePopover()
+            },
+            onQuit: {
+                NSApp.terminate(nil)
+            }
+        )
         let controller = UsageHostingController(rootView: root, store: store)
         popover.contentViewController = controller
         popover.contentSize = NSSize(width: 500, height: 710)
