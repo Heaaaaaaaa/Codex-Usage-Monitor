@@ -299,6 +299,7 @@ private func testSevenDaySummaryAndCost() throws {
     try requireEqual(store.summary.sessionCount, 1, "7-day session count")
     try requireEqual(store.summary.tokens.total, 1_800, "7-day total tokens")
     try requireEqual(store.summary.tokens.cachedInput, 500, "cached input total")
+    try requireEqual(store.summary.tokens.nonCachedInput, 1_000, "non-cached input total")
     try requireEqual(store.summary.tokens.reasoningOutput, 70, "reasoning total")
     try requireApprox(store.summary.cost, 0.01205, "7-day cost")
     try requireApprox(store.averageCostPerMillion, 6.694_444_444, "average cost per million")
@@ -1744,10 +1745,211 @@ private func testParserHandlesCounterResetsAndFallbackRepeats() throws {
     store.dateWindow = .sevenDays
     store.loadFromDiskSynchronously()
 
-    try requireEqual(store.summary.eventCount, 6, "counter reset and fallback event count")
-    try requireEqual(store.summary.tokens.input, 190, "counter reset and fallback input total")
-    try requireEqual(store.summary.tokens.output, 65, "counter reset and fallback output total")
-    try requireEqual(store.summary.tokens.total, 255, "counter reset and fallback total")
+    try requireEqual(store.summary.eventCount, 7, "counter reset and per-turn event count")
+    try requireEqual(store.summary.tokens.input, 220, "counter reset and per-turn input total")
+    try requireEqual(store.summary.tokens.output, 75, "counter reset and per-turn output total")
+    try requireEqual(store.summary.tokens.total, 295, "counter reset and per-turn total")
+}
+
+@MainActor
+private func testParserPrefersPerTurnUsageAndResolvesAutoReviewModel() throws {
+    let codexHome = try makeTemporaryCodexHome()
+    let cacheURL = try makeTemporaryCacheURL()
+    defer {
+        try? FileManager.default.removeItem(at: codexHome)
+        try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent())
+    }
+
+    let sessionID = "019parser-last-usage-session"
+    let sessionFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(sessionID).jsonl")
+    try writeJSONL(sessionFile, [
+        [
+            "type": "session_meta",
+            "session_id": sessionID,
+            "cwd": "/tmp/Per Turn Project",
+            "model": "codex-auto-review"
+        ],
+        tokenEvent(timestamp: isoString(daysAgo: 1), info: [
+            "last_token_usage": tokenUsage(input: 100, cached: 80, output: 20, reasoning: 5, total: 120),
+            "total_token_usage": tokenUsage(input: 1_000, cached: 900, output: 100, reasoning: 40, total: 1_100)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 1), info: [
+            "last_token_usage": tokenUsage(input: 60, cached: 50, output: 10, reasoning: 3, total: 70),
+            "total_token_usage": tokenUsage(input: 1_600, cached: 1_400, output: 180, reasoning: 60, total: 1_780)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 2), info: [
+            "last_token_usage": tokenUsage(input: 0, cached: 0, output: 0, reasoning: 0, total: 123)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 3), info: [
+            "last_token_usage": tokenUsage(input: 0, cached: 0, output: 0, reasoning: 0, total: 0),
+            "total_token_usage": tokenUsage(input: 2_000, cached: 1_800, output: 200, reasoning: 80, total: 2_200)
+        ])
+    ])
+
+    let store = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
+    store.dateWindow = .sevenDays
+    store.loadFromDiskSynchronously()
+
+    try requireEqual(store.summary.tokens.input, 160, "per-turn input is preferred over cumulative totals")
+    try requireEqual(store.summary.tokens.cachedInput, 130, "per-turn cached input")
+    try requireEqual(store.summary.tokens.nonCachedInput, 30, "per-turn non-cached input")
+    try requireEqual(store.summary.tokens.output, 30, "per-turn output")
+    try requireEqual(store.summary.tokens.total, 190, "per-turn total")
+    try requireEqual(store.summary.eventCount, 2, "empty and total-only per-turn rows are ignored")
+    try requireEqual(store.modelRows.map(\.label), ["gpt-5.5"], "auto-review model fallback")
+}
+
+@MainActor
+private func testParserSkipsThreadSpawnAndForkReplayHistory() throws {
+    let codexHome = try makeTemporaryCodexHome()
+    let cacheURL = try makeTemporaryCacheURL()
+    defer {
+        try? FileManager.default.removeItem(at: codexHome)
+        try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent())
+    }
+
+    let parentID = "019parser-replay-parent"
+    let parentUsageA = tokenUsage(input: 1_000, cached: 900, output: 200, reasoning: 50, total: 1_200)
+    let parentUsageB = tokenUsage(input: 500, cached: 450, output: 100, reasoning: 25, total: 600)
+    let parentFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(parentID).jsonl")
+    try writeJSONL(parentFile, [
+        ["type": "session_meta", "session_id": parentID, "cwd": "/tmp/Replay Project", "model": "gpt-5.5"],
+        tokenEvent(timestamp: isoString(daysAgo: 1), info: [
+            "last_token_usage": parentUsageA,
+            "total_token_usage": parentUsageA
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 1), info: [
+            "last_token_usage": parentUsageB,
+            "total_token_usage": tokenUsage(input: 1_500, cached: 1_350, output: 300, reasoning: 75, total: 1_800)
+        ])
+    ])
+
+    let threadID = "019parser-thread-spawn"
+    let threadTimestamp = isoString(daysAgo: 1, secondsOffset: 10)
+    let threadFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(threadID).jsonl")
+    try writeJSONL(threadFile, [
+        [
+            "timestamp": threadTimestamp,
+            "type": "session_meta",
+            "session_id": threadID,
+            "model": "gpt-5.5",
+            "source": ["subagent": ["thread_spawn": ["parent_thread_id": parentID]]]
+        ],
+        tokenEvent(timestamp: threadTimestamp, info: [
+            "last_token_usage": parentUsageA,
+            "total_token_usage": parentUsageA
+        ]),
+        tokenEvent(timestamp: threadTimestamp, info: [
+            "last_token_usage": parentUsageB,
+            "total_token_usage": tokenUsage(input: 1_500, cached: 1_350, output: 300, reasoning: 75, total: 1_800)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 11), info: [
+            "last_token_usage": tokenUsage(input: 100, cached: 90, output: 20, reasoning: 5, total: 120),
+            "total_token_usage": tokenUsage(input: 100, cached: 90, output: 20, reasoning: 5, total: 120)
+        ])
+    ])
+
+    let forkID = "019parser-fork"
+    let forkTimestamp = isoString(daysAgo: 1, secondsOffset: 20)
+    let forkFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(forkID).jsonl")
+    try writeJSONL(forkFile, [
+        [
+            "timestamp": forkTimestamp,
+            "type": "session_meta",
+            "session_id": forkID,
+            "model": "gpt-5.5",
+            "forked_from_id": parentID
+        ],
+        tokenEvent(timestamp: forkTimestamp, info: [
+            "last_token_usage": parentUsageA,
+            "total_token_usage": parentUsageA
+        ]),
+        tokenEvent(timestamp: forkTimestamp, info: [
+            "last_token_usage": parentUsageB,
+            "total_token_usage": tokenUsage(input: 1_500, cached: 1_350, output: 300, reasoning: 75, total: 1_800)
+        ]),
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 21), info: [
+            "last_token_usage": tokenUsage(input: 200, cached: 180, output: 40, reasoning: 10, total: 240),
+            "total_token_usage": tokenUsage(input: 200, cached: 180, output: 40, reasoning: 10, total: 240)
+        ])
+    ])
+
+    let store = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
+    store.dateWindow = .sevenDays
+    store.loadFromDiskSynchronously()
+
+    try requireEqual(store.summary.eventCount, 4, "parent and real branch events only")
+    try requireEqual(store.summary.tokens.input, 1_800, "replayed branch input is excluded")
+    try requireEqual(store.summary.tokens.cachedInput, 1_620, "replayed branch cache is excluded")
+    try requireEqual(store.summary.tokens.output, 360, "replayed branch output is excluded")
+    try requireEqual(store.summary.tokens.total, 2_160, "replayed branch total is excluded")
+}
+
+@MainActor
+private func testParserDeduplicatesCopiedEventsAcrossSessionFiles() throws {
+    let codexHome = try makeTemporaryCodexHome()
+    let cacheURL = try makeTemporaryCacheURL()
+    defer {
+        try? FileManager.default.removeItem(at: codexHome)
+        try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent())
+    }
+
+    let sharedTimestamp = isoString(daysAgo: 1)
+    let sharedUsage = tokenUsage(input: 300, cached: 250, output: 50, reasoning: 10, total: 350)
+    for sessionID in ["019parser-copy-a", "019parser-copy-b"] {
+        let file = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(sessionID).jsonl")
+        var lines: [[String: Any]] = [
+            ["type": "session_meta", "session_id": sessionID, "model": "gpt-5.5"],
+            tokenEvent(timestamp: sharedTimestamp, info: ["last_token_usage": sharedUsage])
+        ]
+        if sessionID.hasSuffix("b") {
+            lines.append(tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 1), info: [
+                "last_token_usage": tokenUsage(input: 100, cached: 80, output: 20, reasoning: 5, total: 120)
+            ]))
+        }
+        try writeJSONL(file, lines)
+    }
+
+    let store = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
+    store.dateWindow = .sevenDays
+    store.loadFromDiskSynchronously()
+
+    try requireEqual(store.summary.eventCount, 2, "copied event appears once")
+    try requireEqual(store.summary.tokens.input, 400, "copied input is deduplicated")
+    try requireEqual(store.summary.tokens.output, 70, "unique event is retained")
+    try requireEqual(store.summary.tokens.total, 470, "copied total is deduplicated")
+}
+
+@MainActor
+private func testParserPrefersActiveCopyOverArchivedRelativePath() throws {
+    let codexHome = try makeTemporaryCodexHome()
+    let cacheURL = try makeTemporaryCacheURL()
+    defer {
+        try? FileManager.default.removeItem(at: codexHome)
+        try? FileManager.default.removeItem(at: cacheURL.deletingLastPathComponent())
+    }
+
+    let relativePath = "2026/07/15/shared-session.jsonl"
+    try writeJSONL(codexHome.appendingPathComponent("sessions/\(relativePath)"), [
+        ["type": "session_meta", "session_id": "active", "model": "gpt-5.5"],
+        tokenEvent(timestamp: isoString(daysAgo: 1), info: [
+            "last_token_usage": tokenUsage(input: 100, cached: 80, output: 20, reasoning: 5, total: 120)
+        ])
+    ])
+    try writeJSONL(codexHome.appendingPathComponent("archived_sessions/\(relativePath)"), [
+        ["type": "session_meta", "session_id": "archived", "model": "gpt-5.5"],
+        tokenEvent(timestamp: isoString(daysAgo: 1, secondsOffset: 1), info: [
+            "last_token_usage": tokenUsage(input: 900, cached: 700, output: 100, reasoning: 20, total: 1_000)
+        ])
+    ])
+
+    let store = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
+    store.dateWindow = .sevenDays
+    store.loadFromDiskSynchronously()
+
+    try requireEqual(store.summary.eventCount, 1, "active copy wins over archived duplicate path")
+    try requireEqual(store.summary.tokens.input, 100, "archived duplicate path is ignored")
+    try requireEqual(store.summary.tokens.total, 120, "active duplicate-path total")
 }
 
 @MainActor
@@ -1944,7 +2146,7 @@ private func testExtremeNumericLogValuesAreContained() throws {
     store.dateWindow = .lifetime
     store.loadFromDiskSynchronously()
 
-    try requireEqual(store.summary.tokens, UsageTokens(input: 0, cachedInput: 0, output: 0, reasoningOutput: 0, total: 42), "extreme and negative token fields are contained")
+    try requireEqual(store.summary.tokens, .zero, "extreme and total-only token fields are discarded")
     try requireEqual(store.latestLimits?.primary?.usedPercent, 0, "non-finite limit percentage falls back safely")
     try requireEqual(store.latestLimits?.primary?.windowMinutes, 0, "out-of-range limit window falls back safely")
     try requireEqual(store.latestLimits?.primary?.resetsAt, nil, "out-of-range reset timestamp is ignored")
@@ -2005,7 +2207,11 @@ private struct RunTests {
             ("diagnostic report", testDiagnosticReportIncludesSupportContext),
             ("parse cache", testParseCacheReusesAndInvalidatesFiles),
             ("parse diagnostics", testParseDiagnosticsReportMalformedTokenLines),
-            ("counter reset and fallback parsing", testParserHandlesCounterResetsAndFallbackRepeats),
+            ("counter reset and per-turn parsing", testParserHandlesCounterResetsAndFallbackRepeats),
+            ("per-turn usage preference", testParserPrefersPerTurnUsageAndResolvesAutoReviewModel),
+            ("fork replay suppression", testParserSkipsThreadSpawnAndForkReplayHistory),
+            ("copied event deduplication", testParserDeduplicatesCopiedEventsAcrossSessionFiles),
+            ("active archive path deduplication", testParserPrefersActiveCopyOverArchivedRelativePath),
             ("oversized log line bounds", testParserBoundsOversizedRelevantLines),
             ("Codex JSONL parsing", testCodexJSONLParsing),
             ("long-running session parsing", testLongRunningSessionIncludesRecentEvents),

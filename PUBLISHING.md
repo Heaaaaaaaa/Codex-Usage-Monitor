@@ -32,11 +32,11 @@ Local artifacts are written to the configured `OUT_DIR`:
 
 ```text
 CodexUsageMonitor.app
-CodexUsageMonitor-0.4.4.zip
-CodexUsageMonitor-0.4.4.zip.sha256
-CodexUsageMonitor-0.4.4.dmg
-CodexUsageMonitor-0.4.4.dmg.sha256
-CodexUsageMonitor-0.4.4.manifest.json
+CodexUsageMonitor-0.4.5.zip
+CodexUsageMonitor-0.4.5.zip.sha256
+CodexUsageMonitor-0.4.5.dmg
+CodexUsageMonitor-0.4.5.dmg.sha256
+CodexUsageMonitor-0.4.5.manifest.json
 ```
 
 ## Public Source Repository
@@ -61,7 +61,7 @@ That history audit is expected to reject this development repository. The public
 make source-archive
 ```
 
-This creates `CodexUsageMonitor-0.4.4-source.zip` and its SHA-256 file from tracked `HEAD` only. Apply that snapshot to a clean clone of the public repository, preserve its existing `.git` directory and `LICENSE`, and commit with the configured GitHub no-reply identity. Run `make audit-public-history` in the public clone and require it to pass before every push. The source validator rejects tracked credentials, private keys, raw JSONL/log files, generated build directories, current-user absolute home paths, unsafe ZIP paths, and symbolic links.
+This creates `CodexUsageMonitor-0.4.5-source.zip` and its SHA-256 file from tracked `HEAD` only. Apply that snapshot to a clean clone of the public repository, preserve its existing `.git` directory and `LICENSE`, and commit with the configured GitHub no-reply identity. Run `make audit-public-history` in the public clone and require it to pass before every push. The source validator rejects tracked credentials, private keys, raw JSONL/log files, generated build directories, current-user absolute home paths, unsafe ZIP paths, and symbolic links.
 
 ## Public Release
 
@@ -126,9 +126,9 @@ Set the remaining secrets through GitHub repository settings or `gh secret set -
 Before pushing a release tag, validate it locally:
 
 ```bash
-python3 Tools/ValidateReleaseVersion.py --repo . --tag v0.4.4
-git tag -a v0.4.4 -m "Codex Usage Monitor 0.4.4"
-git push origin v0.4.4
+python3 Tools/ValidateReleaseVersion.py --repo . --tag v0.4.5
+git tag -a v0.4.5 -m "Codex Usage Monitor 0.4.5"
+git push origin v0.4.5
 ```
 
 The workflow uses the repository-scoped `GITHUB_TOKEN` with only `contents: write` to create the release. It refuses to create a release for a missing remote tag.

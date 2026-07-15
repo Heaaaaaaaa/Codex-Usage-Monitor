@@ -4,6 +4,8 @@ A small native macOS menu-bar app for local Codex usage visibility.
 
 It reads local Codex JSONL logs from `~/.codex/sessions`, `~/.codex/archived_sessions`, and `~/.codex/session_index.jsonl`. It does not read auth files or send data anywhere.
 
+Token counting prefers each event's per-turn usage, falls back to cumulative deltas for older logs, suppresses replayed history in spawned or forked sessions, and deduplicates copied events across active and archived files. Cached input is a subset of input, so the dashboard reports non-cached input (`input - cached`) and cached input separately.
+
 <p align="center">
   <img src="Docs/Screenshots/dashboard.jpeg" alt="Codex Usage Monitor seven-day dashboard with token and estimated-cost totals" width="48%">
   <img src="Docs/Screenshots/pricing-rates.jpeg" alt="Codex Usage Monitor editable per-model USD pricing table" width="48%">
@@ -33,7 +35,7 @@ It reads local Codex JSONL logs from `~/.codex/sessions`, `~/.codex/archived_ses
 - Optional macOS notifications when budgets reach warning or exceeded states.
 - Token-level pricing coverage, warnings for incomplete model rates, and one-click placeholder rows in the editable rate table.
 - Scan-health notices for first launch, missing logs, malformed log lines, empty filters, and incomplete cost estimates.
-- Input, cached input, output, and reasoning token totals when present in local logs.
+- Non-cached input, cached input, output, and reasoning token totals when present in local logs.
 - Cost mix by non-cached input, cached input, output, and total-only log rows.
 - Daily token or estimated-cost trend for the current filter, with explicit inactive calendar days.
 - Recent activity list for the latest token events in the current filter.
@@ -103,10 +105,10 @@ make verify-release
 make verify-public-release BUNDLE_IDENTIFIER=com.yourdomain.codexusagemonitor
 make verify-public-source
 make source-archive
-python3 Tools/ValidateReleaseVersion.py --repo . --tag v0.4.4
+python3 Tools/ValidateReleaseVersion.py --repo . --tag v0.4.5
 ```
 
-`make test` runs synthetic usage tests for cost math, pricing source metadata, budget tracking and alerts, diagnostics reports, unpriced-model handling, filtering, recent activity, persisted preferences, startup, refresh throttling, mid-scan source changes, menu-bar display and snapshot behavior, expired limits, calendar-aligned token/cost trends, summary text, CSV export, parse-cache behavior, parse diagnostics, extreme numeric log containment, Codex JSONL parsing, demo-fixture safety, public support metadata, bundle identifier validation, and Developer ID signing-identity validation. `make verify-concurrency` type-checks the app, test harness, and diagnostic tool with Swift complete concurrency checking and treats every warning as an error. `make check` runs that gate, builds the app, runs the tests, runs a bounded 7-day local usage diagnostic with a build-local cache, validates plists, validates the source and bundled privacy manifests, verifies the universal binary slices, and checks the ad-hoc signature. `make verify-runtime` is an interactive macOS smoke test: it launches an isolated instance of the exact built bundle, confirms the popover appears, activates Finder, requires the popover to hide, terminates the isolated instance, and restores the previously focused app. `make verify-release` also rebuilds the zip and DMG, generates the release manifest with privacy, pricing, actual executable architecture metadata, and code-signature metadata, checks both SHA-256 files, verifies the disk image, and verifies the manifest. `make verify-public-release` adds the public gate: the repo must be clean, `BUNDLE_IDENTIFIER` must be a non-placeholder reverse-DNS identifier, the manifest must match the current commit, and `gitDirty` must be false.
+`make test` runs synthetic usage tests for cost math, pricing source metadata, budget tracking and alerts, diagnostics reports, unpriced-model handling, filtering, recent activity, persisted preferences, startup, refresh throttling, mid-scan source changes, menu-bar display and snapshot behavior, expired limits, calendar-aligned token/cost trends, summary text, CSV export, parse-cache behavior, parse diagnostics, per-turn token accounting, fork replay suppression, copied-event deduplication, extreme numeric log containment, Codex JSONL parsing, demo-fixture safety, public support metadata, bundle identifier validation, and Developer ID signing-identity validation. `make verify-concurrency` type-checks the app, test harness, and diagnostic tool with Swift complete concurrency checking and treats every warning as an error. `make check` runs that gate, builds the app, runs the tests, runs a bounded 7-day local usage diagnostic with a build-local cache, validates plists, validates the source and bundled privacy manifests, verifies the universal binary slices, and checks the ad-hoc signature. `make verify-runtime` is an interactive macOS smoke test: it launches an isolated instance of the exact built bundle, confirms the popover appears, activates Finder, requires the popover to hide, terminates the isolated instance, and restores the previously focused app. `make verify-release` also rebuilds the zip and DMG, generates the release manifest with privacy, pricing, actual executable architecture metadata, and code-signature metadata, checks both SHA-256 files, verifies the disk image, and verifies the manifest. `make verify-public-release` adds the public gate: the repo must be clean, `BUNDLE_IDENTIFIER` must be a non-placeholder reverse-DNS identifier, the manifest must match the current commit, and `gitDirty` must be false.
 
 The GitHub Actions workflow in `.github/workflows/release-check.yml` runs `make verify-public-release`, checks the bundle identifier override path, and uploads the app, zip, DMG, checksums, and manifest as workflow artifacts. The separate credential-gated `.github/workflows/publish-release.yml` workflow turns a matching `v*` tag into a Developer ID signed, notarized, stapled GitHub release.
 
@@ -125,11 +127,11 @@ make verify-public-artifacts
 The distributable artifacts are written to:
 
 ```text
-../../outputs/CodexUsageMonitor-0.4.4.zip
-../../outputs/CodexUsageMonitor-0.4.4.zip.sha256
-../../outputs/CodexUsageMonitor-0.4.4.dmg
-../../outputs/CodexUsageMonitor-0.4.4.dmg.sha256
-../../outputs/CodexUsageMonitor-0.4.4.manifest.json
+../../outputs/CodexUsageMonitor-0.4.5.zip
+../../outputs/CodexUsageMonitor-0.4.5.zip.sha256
+../../outputs/CodexUsageMonitor-0.4.5.dmg
+../../outputs/CodexUsageMonitor-0.4.5.dmg.sha256
+../../outputs/CodexUsageMonitor-0.4.5.manifest.json
 ```
 
 The default release is ad-hoc signed for local testing. The DMG target creates a drag-to-Applications installer image from the current app bundle.
@@ -143,8 +145,8 @@ make verify-release BUNDLE_IDENTIFIER=com.yourname.codexusagemonitor
 Verify downloaded or copied artifacts from the folder containing them:
 
 ```bash
-shasum -a 256 -c CodexUsageMonitor-0.4.4.zip.sha256
-shasum -a 256 -c CodexUsageMonitor-0.4.4.dmg.sha256
+shasum -a 256 -c CodexUsageMonitor-0.4.5.zip.sha256
+shasum -a 256 -c CodexUsageMonitor-0.4.5.dmg.sha256
 ```
 
 ## Developer ID Distribution

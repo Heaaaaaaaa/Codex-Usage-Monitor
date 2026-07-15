@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.5 - 2026-07-15
+
+- Fixed inflated usage totals by preferring each event's per-turn `last_token_usage` over cumulative session snapshots.
+- Excluded replayed parent history from spawned and forked sessions, deduplicated copied token events across files, and preferred active session files over archived copies at the same relative path.
+- Displayed non-cached input separately from its cached-input subset so dashboard token categories no longer appear to double count input.
+- Resolved `codex-auto-review` events to their time-appropriate fallback model for pricing and ignored legacy total-only bookkeeping rows without billable token components.
+- Invalidated older parsed-log caches and added regression coverage for per-turn parsing, replay suppression, copied events, active/archive duplication, and fixed-window ccusage accounting parity.
+
 ## 0.4.4 - 2026-07-15
 
 - Added an accessible power button to the dashboard header so the menu-bar app can be quit directly from its popover.

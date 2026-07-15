@@ -112,7 +112,8 @@ def test_parse_cache_safeguards() -> None:
     usage_data = (repo / "Sources/UsageData.swift").read_text(encoding="utf-8")
     swift_tests = (repo / "Tools/RunTests.swift").read_text(encoding="utf-8")
     diagnostic = (repo / "Tools/DumpSummary.swift").read_text(encoding="utf-8")
-    combined = makefile + usage_data + swift_tests + diagnostic
+    views = (repo / "Sources/Views.swift").read_text(encoding="utf-8")
+    combined = makefile + usage_data + swift_tests + diagnostic + views
     required_snippets = [
         "DIAGNOSTIC_CACHE :=",
         '"$(DIAGNOSTIC)" "$(abspath $(DIAGNOSTIC_CACHE))"',
@@ -123,6 +124,13 @@ def test_parse_cache_safeguards() -> None:
         "session index changes do not invalidate parsed token files",
         "package: all",
         "package-dmg: all",
+        "parseCacheVersion = 4",
+        "UsageEventSignature",
+        "last_token_usage",
+        "threadSpawnMarker",
+        "forkedFromMarker",
+        "hasTokenBreakdown",
+        'TokenChip(title: "Non-cached"',
     ]
     for snippet in required_snippets:
         require(snippet in combined, f"parse cache safeguard missing: {snippet}")
@@ -130,13 +138,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.4.4")
-    require_equal(version, "0.4.4", "release version")
-    require_equal(build, "8", "release build")
+    version, build, errors = release_version_errors(repo, "v0.4.5")
+    require_equal(version, "0.4.5", "release version")
+    require_equal(build, "9", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.4.4" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.4.5" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)

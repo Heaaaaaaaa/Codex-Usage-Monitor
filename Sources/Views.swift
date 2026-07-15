@@ -288,7 +288,7 @@ struct RootView: View {
             }
 
             LazyVGrid(columns: AppStyle.twoColumns, spacing: 8) {
-                TokenChip(title: "Input", value: UsageStore.compactNumber(store.summary.tokens.input), color: AppColor.blue)
+                TokenChip(title: "Non-cached", value: UsageStore.compactNumber(store.summary.tokens.nonCachedInput), color: AppColor.blue)
                 TokenChip(title: "Cached", value: UsageStore.compactNumber(store.summary.tokens.cachedInput), color: AppColor.gold)
                 TokenChip(title: "Output", value: UsageStore.compactNumber(store.summary.tokens.output), color: AppColor.rose)
                 TokenChip(title: "Reasoning", value: UsageStore.compactNumber(store.summary.tokens.reasoningOutput), color: AppColor.green)
@@ -456,7 +456,7 @@ struct RootView: View {
         Panel {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle("Token Mix")
-                StatRow(symbol: "arrow.down.left", color: AppColor.blue, label: "Input tokens", value: UsageStore.compactNumber(store.summary.tokens.input))
+                StatRow(symbol: "arrow.down.left", color: AppColor.blue, label: "Non-cached input", value: UsageStore.compactNumber(store.summary.tokens.nonCachedInput))
                 StatRow(symbol: "bolt.horizontal", color: AppColor.gold, label: "Cached input", value: UsageStore.compactNumber(store.summary.tokens.cachedInput))
                 StatRow(symbol: "arrow.up.right", color: AppColor.rose, label: "Output tokens", value: UsageStore.compactNumber(store.summary.tokens.output))
                 StatRow(symbol: "sparkles", color: AppColor.green, label: "Reasoning tokens", value: UsageStore.compactNumber(store.summary.tokens.reasoningOutput))

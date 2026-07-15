@@ -11,6 +11,22 @@ struct UsageTokens: Codable, Hashable {
 
     static let zero = UsageTokens(input: 0, cachedInput: 0, output: 0, reasoningOutput: 0, total: 0)
 
+    var totalInput: Int {
+        max(max(input, cachedInput), 0)
+    }
+
+    var cachedInputSubset: Int {
+        min(max(cachedInput, 0), totalInput)
+    }
+
+    var nonCachedInput: Int {
+        max(totalInput - cachedInputSubset, 0)
+    }
+
+    var hasTokenBreakdown: Bool {
+        input > 0 || cachedInput > 0 || output > 0 || reasoningOutput > 0
+    }
+
     static func +(lhs: UsageTokens, rhs: UsageTokens) -> UsageTokens {
         UsageTokens(
             input: lhs.input + rhs.input,
@@ -41,6 +57,26 @@ struct UsageEntry: Codable, Identifiable, Hashable {
     let model: String
     let tokens: UsageTokens
     let sourceFile: String
+}
+
+private struct UsageEventSignature: Hashable {
+    let timestamp: Date
+    let model: String
+    let input: Int
+    let cachedInput: Int
+    let output: Int
+    let reasoningOutput: Int
+    let total: Int
+
+    init(entry: UsageEntry) {
+        timestamp = entry.timestamp
+        model = entry.model
+        input = entry.tokens.input
+        cachedInput = entry.tokens.cachedInput
+        output = entry.tokens.output
+        reasoningOutput = entry.tokens.reasoningOutput
+        total = entry.tokens.total
+    }
 }
 
 struct WindowLimit: Codable, Equatable {
@@ -1400,7 +1436,7 @@ final class UsageStore: ObservableObject {
         let files = sessionFiles(cutoff: cutoff, codexHome: source.codexHome)
         var allEntries: [UsageEntry] = []
         var latestLimit: RateLimitSnapshot?
-        var seenEntryIDs = Set<String>()
+        var seenEntrySignatures = Set<UsageEventSignature>()
         var parseIssueCount = 0
         var latestParseIssue: String?
 
@@ -1417,7 +1453,7 @@ final class UsageStore: ObservableObject {
                 cachedFileCount: &cachedFileCount
             )
             for entry in parsed.entries where cutoff.map({ entry.timestamp >= $0 }) ?? true {
-                guard seenEntryIDs.insert(entry.id).inserted else {
+                guard seenEntrySignatures.insert(UsageEventSignature(entry: entry)).inserted else {
                     continue
                 }
                 allEntries.append(entry)
@@ -1678,11 +1714,21 @@ final class UsageStore: ObservableObject {
         ]
         let resourceKeys: [URLResourceKey] = [.contentModificationDateKey]
         var urls: [URL] = []
+        var seenRelativePaths = Set<String>()
         for folder in folders {
+            let resolvedFolderPath = folder.resolvingSymlinksInPath().standardizedFileURL.path + "/"
             guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: resourceKeys) else {
                 continue
             }
             for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+                let resolvedFilePath = url.resolvingSymlinksInPath().standardizedFileURL.path
+                guard resolvedFilePath.hasPrefix(resolvedFolderPath) else {
+                    continue
+                }
+                let relativePath = String(resolvedFilePath.dropFirst(resolvedFolderPath.count))
+                guard seenRelativePaths.insert(relativePath).inserted else {
+                    continue
+                }
                 if let cutoff, !fileMayContainEvents(url, since: cutoff) {
                     continue
                 }
@@ -1726,11 +1772,12 @@ final class UsageStore: ObservableObject {
         var currentProject = ""
         var currentModel = "unknown"
         var previousTotal: UsageTokens?
-        var previousFallbackUsage: UsageTokens?
         var entries: [UsageEntry] = []
         var latestLimit: RateLimitSnapshot?
         var parseIssueCount = 0
         var latestParseIssue: String?
+        let replaySecond = replaySecond(in: url)
+        var skippingReplay = replaySecond != nil
 
         func recordParseIssue(_ message: String, lineNumber: Int? = nil) {
             parseIssueCount += 1
@@ -1753,7 +1800,7 @@ final class UsageStore: ObservableObject {
                 if let model = extractStringField("model", from: line) {
                     currentModel = model
                 }
-                return
+                return true
             }
 
             if line.contains("\"type\":\"turn_context\"") {
@@ -1763,33 +1810,34 @@ final class UsageStore: ObservableObject {
                 if let model = extractStringField("model", from: line) {
                     currentModel = model
                 }
-                return
+                return true
             }
 
             guard line.contains("\"type\":\"token_count\"") else {
-                return
+                return true
             }
 
             guard let object = jsonObject(line) else {
                 recordParseIssue("invalid token JSON", lineNumber: lineNumber)
-                return
+                return true
             }
 
-            guard let timestamp = parseDate(object["timestamp"] as? String) else {
+            guard let timestampText = object["timestamp"] as? String,
+                  let timestamp = parseDate(timestampText) else {
                 recordParseIssue("missing token timestamp", lineNumber: lineNumber)
-                return
+                return true
             }
 
             guard let type = object["type"] as? String,
                   let payload = object["payload"] as? [String: Any] else {
                 recordParseIssue("missing token payload", lineNumber: lineNumber)
-                return
+                return true
             }
 
             guard type == "event_msg",
                   let eventType = payload["type"] as? String,
                   eventType == "token_count" else {
-                return
+                return true
             }
 
             if let limit = parseRateLimit(payload: payload, seenAt: timestamp) {
@@ -1797,34 +1845,54 @@ final class UsageStore: ObservableObject {
             }
 
             guard let info = payload["info"] as? [String: Any] else {
-                return
+                return true
             }
 
-            if let totalDict = info["total_token_usage"] as? [String: Any] {
-                let total = tokens(from: totalDict)
-                if total.total > 0 {
-                    let usage: UsageTokens
-                    if let previousTotal {
-                        usage = total.total < previousTotal.total ? total : total - previousTotal
-                    } else {
-                        usage = total
+            let totalUsage = (info["total_token_usage"] as? [String: Any]).map(tokens(from:))
+
+            if let replaySecond, skippingReplay {
+                if timestampText.count >= 19, String(timestampText.prefix(19)) == replaySecond {
+                    if let totalUsage {
+                        previousTotal = totalUsage
                     }
-                    if usage.total > 0 {
-                        entries.append(makeEntry(timestamp: timestamp, sessionID: sessionID, chatTitle: chatTitle, project: currentProject, model: currentModel, tokens: usage, file: url, line: lineNumber))
-                    }
-                    previousTotal = total
-                    previousFallbackUsage = nil
-                    return
+                    return true
                 }
+                skippingReplay = false
             }
 
-            if let lastDict = info["last_token_usage"] as? [String: Any] {
-                let fallback = tokens(from: lastDict)
-                if fallback.total > 0 && fallback != previousFallbackUsage {
-                    entries.append(makeEntry(timestamp: timestamp, sessionID: sessionID, chatTitle: chatTitle, project: currentProject, model: currentModel, tokens: fallback, file: url, line: lineNumber))
-                }
-                previousFallbackUsage = fallback
+            let eventModel = (payload["model"] as? String) ?? (info["model"] as? String) ?? currentModel
+            if !eventModel.isEmpty {
+                currentModel = eventModel
             }
+            let resolvedModel = resolvedModel(eventModel, at: timestamp)
+
+            var usage = (info["last_token_usage"] as? [String: Any]).map(tokens(from:))
+            if usage == nil, let totalUsage, totalUsage.total > 0 {
+                if let previousTotal {
+                    usage = totalUsage.total < previousTotal.total ? totalUsage : totalUsage - previousTotal
+                } else {
+                    usage = totalUsage
+                }
+            }
+            if let totalUsage {
+                previousTotal = totalUsage
+            }
+
+            if let usage, usage.hasTokenBreakdown {
+                entries.append(
+                    makeEntry(
+                        timestamp: timestamp,
+                        sessionID: sessionID,
+                        chatTitle: chatTitle,
+                        project: currentProject,
+                        model: resolvedModel,
+                        tokens: usage,
+                        file: url,
+                        line: lineNumber
+                    )
+                )
+            }
+            return true
         }
 
         parseIssueCount += lineDiagnostics.issueCount
@@ -1840,7 +1908,51 @@ final class UsageStore: ObservableObject {
         )
     }
 
-    nonisolated private static func forEachLine(in url: URL, _ body: (String, Int) -> Void) -> LineReadDiagnostics {
+    nonisolated private static func replaySecond(in url: URL) -> String? {
+        guard filePrefixContainsReplayMarker(url) else {
+            return nil
+        }
+        var tokenSeconds: [String] = []
+        _ = forEachLine(in: url) { line, _ in
+            guard line.contains("\"type\":\"token_count\""),
+                  let object = jsonObject(line),
+                  object["type"] as? String == "event_msg",
+                  let payload = object["payload"] as? [String: Any],
+                  payload["type"] as? String == "token_count",
+                  let info = payload["info"] as? [String: Any],
+                  info["last_token_usage"] is [String: Any] || info["total_token_usage"] is [String: Any],
+                  let timestamp = object["timestamp"] as? String,
+                  timestamp.count >= 19 else {
+                return true
+            }
+            tokenSeconds.append(String(timestamp.prefix(19)))
+            return tokenSeconds.count < 2
+        }
+        guard tokenSeconds.count == 2, tokenSeconds[0] == tokenSeconds[1] else {
+            return nil
+        }
+        return tokenSeconds[0]
+    }
+
+    nonisolated private static func filePrefixContainsReplayMarker(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return false
+        }
+        defer {
+            try? handle.close()
+        }
+        do {
+            guard let prefix = try handle.read(upToCount: 16 * 1024) else {
+                return false
+            }
+            return prefix.range(of: Self.threadSpawnMarker) != nil ||
+                prefix.range(of: Self.forkedFromMarker) != nil
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated private static func forEachLine(in url: URL, _ body: (String, Int) -> Bool) -> LineReadDiagnostics {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
             return LineReadDiagnostics(issueCount: 1, latestIssue: "could not open for reading")
         }
@@ -1860,24 +1972,26 @@ final class UsageStore: ObservableObject {
             latestIssue = "line \(lineNumber + 1) \(message)"
         }
 
-        func processLine(_ lineData: Data) {
+        func processLine(_ lineData: Data) -> Bool {
             defer { lineNumber += 1 }
             guard shouldDecodeLine(lineData) else {
-                return
+                return true
             }
             guard lineData.count <= Self.maximumLogLineBytes else {
                 recordLineIssue("exceeds the 8 MB safety limit")
-                return
+                return true
             }
             let dataForString = lineData.range(of: Self.tokenCountMarker) == nil ? lineData.prefix(8192) : lineData[...]
             if let line = String(data: Data(dataForString), encoding: .utf8) {
-                body(line, lineNumber)
+                return body(line, lineNumber)
             } else {
                 recordLineIssue("is not valid UTF-8")
+                return true
             }
         }
 
-        while true {
+        var shouldContinue = true
+        while shouldContinue {
             let chunk: Data?
             do {
                 chunk = try handle.read(upToCount: 64 * 1024)
@@ -1899,7 +2013,10 @@ final class UsageStore: ObservableObject {
                     lineNumber += 1
                     continue
                 }
-                processLine(lineData)
+                shouldContinue = processLine(lineData)
+                if !shouldContinue {
+                    break
+                }
             }
 
             if buffer.count > Self.maximumLogLineBytes {
@@ -1911,8 +2028,8 @@ final class UsageStore: ObservableObject {
             }
         }
 
-        if !buffer.isEmpty, !discardingOversizedLine {
-            processLine(buffer)
+        if shouldContinue, !buffer.isEmpty, !discardingOversizedLine {
+            _ = processLine(buffer)
         }
 
         return LineReadDiagnostics(issueCount: issueCount, latestIssue: latestIssue)
@@ -2097,13 +2214,27 @@ final class UsageStore: ObservableObject {
     }
 
     nonisolated private static func tokens(from dict: [String: Any]) -> UsageTokens {
-        UsageTokens(
-            input: max(intValue(dict["input_tokens"]) ?? 0, 0),
+        let input = max(intValue(dict["input_tokens"]) ?? 0, 0)
+        let output = max(intValue(dict["output_tokens"]) ?? 0, 0)
+        let reportedTotal = max(intValue(dict["total_tokens"]) ?? 0, 0)
+        return UsageTokens(
+            input: input,
             cachedInput: max(intValue(dict["cached_input_tokens"]) ?? 0, 0),
-            output: max(intValue(dict["output_tokens"]) ?? 0, 0),
+            output: output,
             reasoningOutput: max(intValue(dict["reasoning_output_tokens"]) ?? 0, 0),
-            total: max(intValue(dict["total_tokens"]) ?? 0, 0)
+            total: reportedTotal > 0 ? reportedTotal : input + output
         )
+    }
+
+    nonisolated private static func resolvedModel(_ model: String, at timestamp: Date) -> String {
+        guard model == "codex-auto-review" else {
+            return model.isEmpty ? "unknown" : model
+        }
+        let releasedAt = timestamp.timeIntervalSince1970
+        for fallback in Self.autoReviewModelFallbacks where releasedAt >= fallback.releasedAt {
+            return fallback.model
+        }
+        return "gpt-5"
     }
 
     nonisolated private static func jsonObject(_ line: String) -> [String: Any]? {
@@ -2591,7 +2722,7 @@ final class UsageStore: ObservableObject {
     private static let modelRatesKey = "modelRates.v1"
     private static let modelRateCatalogVersionKey = "modelRateCatalogVersion.v1"
     private static let defaultRateCatalogVersion = 3
-    nonisolated private static let parseCacheVersion = 3
+    nonisolated private static let parseCacheVersion = 4
 
     private static let byteCountFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -2607,7 +2738,18 @@ final class UsageStore: ObservableObject {
     nonisolated private static let sessionMetaMarker = Data(#""type":"session_meta""#.utf8)
     nonisolated private static let turnContextMarker = Data(#""type":"turn_context""#.utf8)
     nonisolated private static let tokenCountMarker = Data(#""type":"token_count""#.utf8)
+    nonisolated private static let threadSpawnMarker = Data("thread_spawn".utf8)
+    nonisolated private static let forkedFromMarker = Data("forked_from_id".utf8)
     nonisolated private static let maximumLogLineBytes = 8 * 1024 * 1024
+    nonisolated private static let autoReviewModelFallbacks: [(releasedAt: TimeInterval, model: String)] = [
+        (1_776_902_400, "gpt-5.5"),
+        (1_772_668_800, "gpt-5.4"),
+        (1_770_249_600, "gpt-5.3-codex"),
+        (1_765_411_200, "gpt-5.2-codex"),
+        (1_762_992_000, "gpt-5.1-codex"),
+        (1_757_894_400, "gpt-5-codex"),
+        (1_754_524_800, "gpt-5")
+    ]
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -2668,11 +2810,9 @@ private struct BillableTokenComponents {
     var totalOnlyTokens: Int
 
     init(tokens: UsageTokens) {
-        let reportedInput = max(tokens.input, 0)
-        let reportedCachedInput = max(tokens.cachedInput, 0)
-        let totalInput = max(reportedInput, reportedCachedInput)
-        cachedInputTokens = min(reportedCachedInput, totalInput)
-        inputTokens = max(totalInput - cachedInputTokens, 0)
+        let totalInput = tokens.totalInput
+        cachedInputTokens = min(tokens.cachedInputSubset, totalInput)
+        inputTokens = tokens.nonCachedInput
         outputTokens = max(tokens.output, 0)
         let classifiedTokens = totalInput + outputTokens
         totalOnlyTokens = max(tokens.total - classifiedTokens, 0)
