@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -79,6 +80,11 @@ def test_menu_bar_bundle_metadata() -> None:
     require("NSPanel(" not in launcher, "dashboard must be hosted in a menu-bar popover, not a utility panel")
     require((repo / "Resources/MenuBarIcon.png").is_file(), "menu-bar template icon must be generated and tracked")
 
+    watcher_limit = re.search(r"maxWatchedSessionFiles = (\d+)", launcher)
+    require(watcher_limit is not None, "log watcher descriptor budget must be explicit")
+    require(int(watcher_limit.group(1)) <= 64, "log watcher must leave descriptor headroom for AppKit and SwiftUI")
+    require("queue.sync {}" in launcher, "canceled log watchers must drain before a restart")
+
 
 def test_strict_concurrency_gate() -> None:
     repo = Path(__file__).resolve().parent.parent
@@ -121,13 +127,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.4.2")
-    require_equal(version, "0.4.2", "release version")
-    require_equal(build, "6", "release build")
+    version, build, errors = release_version_errors(repo, "v0.4.3")
+    require_equal(version, "0.4.3", "release version")
+    require_equal(build, "7", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.4.2" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.4.3" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)

@@ -638,8 +638,10 @@ private final class CodexLogWatcher {
     func stop() {
         pendingChange?.cancel()
         pendingChange = nil
-        sources.forEach { $0.cancel() }
-        sources.removeAll()
+        let activeSources = sources
+        sources.removeAll(keepingCapacity: true)
+        activeSources.forEach { $0.cancel() }
+        queue.sync {}
     }
 
     private func recentSessionLogFiles(codexHome: URL) -> [URL] {
@@ -706,5 +708,5 @@ private final class CodexLogWatcher {
         queue.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
-    private static let maxWatchedSessionFiles = 256
+    private static let maxWatchedSessionFiles = 64
 }

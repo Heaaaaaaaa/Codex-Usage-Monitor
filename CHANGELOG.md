@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 - 2026-07-15
+
+- Fixed a launch and popover crash caused by exhausting the 256-file LaunchServices descriptor limit while watching recent Codex session logs.
+- Bounded active session-file watches, drained canceled watchers before restarting, and added a release regression check for the descriptor budget.
+
 ## 0.4.2 - 2026-07-13
 
 - Identified rate-limit cards from each snapshot's reported window duration instead of assuming the primary slot is always five hours and the secondary slot is always weekly.
