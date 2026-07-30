@@ -1435,7 +1435,7 @@ final class UsageStore: ObservableObject {
         let cutoff = Self.scanCutoff(forDays: scanDays)
         let files = sessionFiles(cutoff: cutoff, codexHome: source.codexHome)
         var allEntries: [UsageEntry] = []
-        var latestLimit: RateLimitSnapshot?
+        var limitCandidates: [RateLimitSnapshot] = []
         var seenEntrySignatures = Set<UsageEventSignature>()
         var parseIssueCount = 0
         var latestParseIssue: String?
@@ -1464,8 +1464,8 @@ final class UsageStore: ObservableObject {
             }
             if let limit = parsed.latestLimit {
                 let isWithinLoadedWindow = cutoff.map { limit.seenAt >= $0 } ?? true
-                if isWithinLoadedWindow && (latestLimit == nil || limit.seenAt > latestLimit!.seenAt) {
-                    latestLimit = limit
+                if isWithinLoadedWindow {
+                    limitCandidates.append(limit)
                 }
             }
         }
@@ -1476,7 +1476,7 @@ final class UsageStore: ObservableObject {
 
         return LocalUsageParseResult(
             entries: allEntries,
-            latestLimit: latestLimit,
+            latestLimit: preferredRateLimitSnapshot(limitCandidates, now: Date()),
             scannedFileCount: files.count,
             cachedFileCount: cachedFileCount,
             cacheSizeBytes: cacheFileSize(cacheURL: source.cacheURL),
@@ -1705,6 +1705,44 @@ final class UsageStore: ObservableObject {
             return nil
         }
         return Calendar.current.date(byAdding: .day, value: -(days + 1), to: now)
+    }
+
+    nonisolated static func preferredRateLimitSnapshot(
+        _ snapshots: [RateLimitSnapshot],
+        now: Date = Date()
+    ) -> RateLimitSnapshot? {
+        guard !snapshots.isEmpty else {
+            return nil
+        }
+
+        let windowedSnapshots = snapshots.filter { !$0.reportedWindows.isEmpty }
+        let windowPool = windowedSnapshots.isEmpty ? snapshots : windowedSnapshots
+        let activeSnapshots = windowPool.filter { snapshot in
+            let resetDates = snapshot.reportedWindows.compactMap(\.resetsAt)
+            return resetDates.isEmpty || resetDates.contains { $0 > now }
+        }
+        let activePool = activeSnapshots.isEmpty ? windowPool : activeSnapshots
+        let substantiveSnapshots = activePool.filter { !looksLikeSyntheticZeroSnapshot($0) }
+        let preferredPool = substantiveSnapshots.isEmpty ? activePool : substantiveSnapshots
+        return preferredPool.max { $0.seenAt < $1.seenAt }
+    }
+
+    nonisolated private static func looksLikeSyntheticZeroSnapshot(_ snapshot: RateLimitSnapshot) -> Bool {
+        let windows = snapshot.reportedWindows
+        guard !windows.isEmpty else {
+            return false
+        }
+        return windows.allSatisfy { limit in
+            guard limit.usedPercent >= 0,
+                  limit.usedPercent < 0.000_001,
+                  limit.windowMinutes > 0,
+                  let resetsAt = limit.resetsAt else {
+                return false
+            }
+            let reportedDuration = resetsAt.timeIntervalSince(snapshot.seenAt)
+            let expectedDuration = TimeInterval(limit.windowMinutes) * 60
+            return abs(reportedDuration - expectedDuration) <= 120
+        }
     }
 
     nonisolated private static func sessionFiles(cutoff: Date?, codexHome: URL) -> [URL] {
@@ -2114,11 +2152,12 @@ final class UsageStore: ObservableObject {
     }
 
     nonisolated private static func parseWindowLimit(_ value: Any?) -> WindowLimit? {
-        guard let dict = value as? [String: Any] else {
+        guard let dict = value as? [String: Any],
+              let used = doubleValue(dict["used_percent"]),
+              let minutes = intValue(dict["window_minutes"]),
+              minutes > 0 else {
             return nil
         }
-        let used = doubleValue(dict["used_percent"]) ?? 0
-        let minutes = intValue(dict["window_minutes"]) ?? 0
         let resetDate = intValue(dict["resets_at"]).map { Date(timeIntervalSince1970: TimeInterval($0)) }
         return WindowLimit(usedPercent: used, windowMinutes: minutes, resetsAt: resetDate)
     }
@@ -2722,7 +2761,7 @@ final class UsageStore: ObservableObject {
     private static let modelRatesKey = "modelRates.v1"
     private static let modelRateCatalogVersionKey = "modelRateCatalogVersion.v1"
     private static let defaultRateCatalogVersion = 3
-    nonisolated private static let parseCacheVersion = 4
+    nonisolated private static let parseCacheVersion = 5
 
     private static let byteCountFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6 - 2026-07-30
+
+- Fixed weekly usage showing 100% left when a newer local session emitted a synthetic zero snapshot with a continuously sliding seven-day reset time.
+- Preferred active, substantive account-limit snapshots over competing synthetic zero snapshots while still allowing a genuine reset to display when no stronger evidence exists.
+- Ignored malformed rate-limit windows instead of silently converting them into a false 100%-left card, and invalidated older parsed-log caches.
+
 ## 0.4.5 - 2026-07-15
 
 - Fixed inflated usage totals by preferring each event's per-turn `last_token_usage` over cumulative session snapshots.

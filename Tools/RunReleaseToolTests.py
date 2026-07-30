@@ -124,7 +124,7 @@ def test_parse_cache_safeguards() -> None:
         "session index changes do not invalidate parsed token files",
         "package: all",
         "package-dmg: all",
-        "parseCacheVersion = 4",
+        "parseCacheVersion = 5",
         "UsageEventSignature",
         "last_token_usage",
         "threadSpawnMarker",
@@ -138,13 +138,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.4.5")
-    require_equal(version, "0.4.5", "release version")
-    require_equal(build, "9", "release build")
+    version, build, errors = release_version_errors(repo, "v0.4.6")
+    require_equal(version, "0.4.6", "release version")
+    require_equal(build, "10", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.4.5" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.4.6" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)

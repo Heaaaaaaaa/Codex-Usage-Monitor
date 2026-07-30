@@ -1222,6 +1222,53 @@ private func testRateLimitWindowClassification() throws {
     try requireEqual(reversed.reportedWindows.map { $0.kind.title }, ["5-hour", "Weekly"], "reordered payload keeps truthful labels")
 }
 
+private func testRateLimitSnapshotSelectionRejectsSyntheticSlidingZero() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let realReset = now.addingTimeInterval(6 * 86_400)
+    let realSnapshot = RateLimitSnapshot(
+        seenAt: now.addingTimeInterval(-3),
+        planType: "prolite",
+        primary: WindowLimit(usedPercent: 42, windowMinutes: 10_080, resetsAt: realReset),
+        secondary: nil,
+        resetCreditsDescription: "No reset credits in latest local snapshot"
+    )
+    let syntheticSnapshot = RateLimitSnapshot(
+        seenAt: now,
+        planType: "prolite",
+        primary: WindowLimit(
+            usedPercent: 0,
+            windowMinutes: 10_080,
+            resetsAt: now.addingTimeInterval(10_080 * 60)
+        ),
+        secondary: nil,
+        resetCreditsDescription: "No reset credits in latest local snapshot"
+    )
+    let expiredSnapshot = RateLimitSnapshot(
+        seenAt: now.addingTimeInterval(-60),
+        planType: "prolite",
+        primary: WindowLimit(usedPercent: 99, windowMinutes: 10_080, resetsAt: now.addingTimeInterval(-1)),
+        secondary: nil,
+        resetCreditsDescription: "No reset credits in latest local snapshot"
+    )
+
+    let selected = UsageStore.preferredRateLimitSnapshot(
+        [expiredSnapshot, realSnapshot, syntheticSnapshot],
+        now: now
+    )
+    try requireEqual(selected?.primary?.usedPercent, 42, "real account snapshot beats newer sliding zero")
+    try requireEqual(
+        selected.map { Int((100 - ($0.primary?.usedPercent ?? 100)).rounded()) },
+        58,
+        "selected weekly value matches Codex"
+    )
+
+    let resetOnly = UsageStore.preferredRateLimitSnapshot(
+        [expiredSnapshot, syntheticSnapshot],
+        now: now
+    )
+    try requireEqual(resetOnly?.primary?.usedPercent, 0, "genuine reset remains visible without competing active evidence")
+}
+
 @MainActor
 private func testAppSettingsPersistStartupPreference() throws {
     let preferences = isolatedPreferences()
@@ -2147,9 +2194,7 @@ private func testExtremeNumericLogValuesAreContained() throws {
     store.loadFromDiskSynchronously()
 
     try requireEqual(store.summary.tokens, .zero, "extreme and total-only token fields are discarded")
-    try requireEqual(store.latestLimits?.primary?.usedPercent, 0, "non-finite limit percentage falls back safely")
-    try requireEqual(store.latestLimits?.primary?.windowMinutes, 0, "out-of-range limit window falls back safely")
-    try requireEqual(store.latestLimits?.primary?.resetsAt, nil, "out-of-range reset timestamp is ignored")
+    try require(store.latestLimits?.primary == nil, "invalid limit window is ignored instead of showing 100% left")
 }
 
 @MainActor
@@ -2200,6 +2245,7 @@ private struct RunTests {
             ("reset-credit display", testResetCreditDisplay),
             ("window limit expiry display", testWindowLimitExpiryDisplay),
             ("rate-limit window classification", testRateLimitWindowClassification),
+            ("rate-limit snapshot selection", testRateLimitSnapshotSelectionRejectsSyntheticSlidingZero),
             ("app startup preference", testAppSettingsPersistStartupPreference),
             ("budget settings", testBudgetSettingsAndStatus),
             ("settings import export", testSettingsConfigurationImportExport),

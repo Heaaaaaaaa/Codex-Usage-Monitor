@@ -1,7 +1,7 @@
 APP_NAME ?= CodexUsageMonitor
 BUNDLE_IDENTIFIER ?= local.codex.usagemonitor
-VERSION ?= 0.4.5
-BUILD_NUMBER ?= 9
+VERSION ?= 0.4.6
+BUILD_NUMBER ?= 10
 MINIMUM_MACOS := 13.0
 ROOT := $(abspath ../..)
 DEFAULT_OUT_DIR := $(ROOT)/outputs
