@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 - 2026-09-10
+
+- Redesigned the native popover with compact totals, pinned filters, and separate Overview, Activity, and Breakdown views.
+- Moved account allowances above the chart and replaced repeated metric cards with a clear token composition list.
+- Added native Swift Charts with labeled axes and automatic light and dark appearance.
+- Restyled settings with consistent navigation, flat sections, and improved text contrast.
+- Kept refresh, export, editable rates, budgets, diagnostics, Touch Bar support, and quit available.
+
 ## 0.4.7 - 2026-09-10
 
 - Added GPT-6 Astra with the official Standard short-context rates of $10.00 input, $1.00 cached input, and $50.00 output per 1M tokens.

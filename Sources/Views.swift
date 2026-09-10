@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 extension Notification.Name {
     static let showCodexUsageSettings = Notification.Name("CodexUsageMonitor.showSettings")
@@ -38,7 +39,7 @@ private enum BreakdownKind: String, CaseIterable, Identifiable {
     }
 }
 
-private enum SettingsPage: String, CaseIterable, Identifiable {
+enum SettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
     case budgets = "Budgets"
     case rates = "Rates"
@@ -60,6 +61,14 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     }
 }
 
+enum DashboardPage: String, CaseIterable, Identifiable {
+    case overview = "Overview"
+    case activity = "Activity"
+    case breakdown = "Breakdown"
+
+    var id: String { rawValue }
+}
+
 struct RootView: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var appSettings: AppSettings
@@ -72,6 +81,21 @@ struct RootView: View {
     @State private var confirmingClearCache = false
     @State private var rateDraft: [ModelRate] = []
     @State private var rateDraftBaseline: [ModelRate] = []
+    @State private var dashboardPage: DashboardPage = .overview
+
+    init(store: UsageStore, appSettings: AppSettings, onClose: @escaping () -> Void,
+         onQuit: @escaping () -> Void, initialPage: DashboardPage = .overview,
+         initialSettingsPage: SettingsPage? = nil) {
+        self.store = store
+        self.appSettings = appSettings
+        self.onClose = onClose
+        self.onQuit = onQuit
+        _dashboardPage = State(initialValue: initialPage)
+        _showingSettings = State(initialValue: initialSettingsPage != nil)
+        _selectedSettingsPage = State(initialValue: initialSettingsPage ?? .general)
+        _rateDraft = State(initialValue: store.rates)
+        _rateDraftBaseline = State(initialValue: store.rates)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,10 +107,10 @@ struct RootView: View {
                 dashboardContent
             }
         }
-        .frame(minWidth: 500, minHeight: 620)
-        .background(AppColor.background.opacity(0.88))
-        .background(.ultraThinMaterial)
+        .frame(minWidth: 540, minHeight: 580)
+        .background(AppColor.background)
         .foregroundStyle(AppColor.primaryText)
+        .tint(AppColor.accent)
         .onAppear {
             store.refreshIfNeeded()
         }
@@ -122,53 +146,70 @@ struct RootView: View {
     }
 
     private var dashboardContent: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 14) {
-                if store.isLoadingSelectedWindow {
-                    LoadingUsagePanel(windowTitle: store.dateWindow.title, detail: store.loadMessage)
-                    filters
-                        .disabled(true)
-                } else {
-                    summaryHero
-                    if store.healthStatus.isVisible {
-                        healthNotice
+        VStack(spacing: 0) {
+            filters
+            NavigationTabs(selection: $dashboardPage, items: DashboardPage.allCases, title: { $0.rawValue })
+                .padding(.horizontal, 22)
+            Divider()
+            ScrollView {
+                VStack(spacing: 0) {
+                    if store.isLoadingSelectedWindow {
+                        LoadingUsagePanel(windowTitle: store.dateWindow.title, detail: store.loadMessage)
+                    } else {
+                        if store.healthStatus.isVisible {
+                            healthNotice.padding(.top, 14)
+                        }
+                        switch dashboardPage {
+                        case .overview:
+                            summaryHero
+                            Divider()
+                            limits.padding(.vertical, 16)
+                            Divider()
+                            TrendPanel(rows: store.dailyRows, metric: Binding(get: {
+                                appSettings.trendMetric
+                            }, set: { appSettings.setTrendMetric($0) }))
+                            Divider()
+                            usageComposition
+                            if appSettings.hasBudgetLimits {
+                                Divider()
+                                budgetStatusSection
+                            }
+                        case .activity:
+                            recentActivity
+                        case .breakdown:
+                            breakdown
+                            Divider()
+                            costDetails
+                        }
                     }
-                    if appSettings.hasBudgetLimits {
-                        budgetStatusSection
-                    }
-                    filters
-                    TrendPanel(
-                        rows: store.dailyRows,
-                        metric: Binding(get: {
-                            appSettings.trendMetric
-                        }, set: { metric in
-                            appSettings.setTrendMetric(metric)
-                        })
-                    )
-                    recentActivity
-                    limits
-                    tokenDetails
-                    costDetails
-                    breakdown
                 }
+                .padding(.horizontal, 22)
+                .padding(.bottom, 16)
             }
-            .padding(18)
+            .id(dashboardPage)
+            Divider()
+            HStack(spacing: 6) {
+                Image(systemName: store.isRefreshing ? "arrow.triangle.2.circlepath" : "checkmark.circle")
+                    .foregroundStyle(store.isRefreshing ? AppColor.secondaryText : AppColor.green)
+                Text(store.isRefreshing ? "Refreshing" : "Updated \(store.lastRefreshText)")
+                Spacer()
+                Text("\(store.summary.sessionCount) chats")
+                Text("\u{00B7}")
+                Text("\(store.summary.eventCount) events")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(AppColor.secondaryText)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 10)
+            .background(AppColor.panel)
         }
     }
 
     private var settingsContent: some View {
         VStack(spacing: 0) {
-            Picker("Settings section", selection: $selectedSettingsPage) {
-                ForEach(SettingsPage.allCases) { page in
-                    Text(page.rawValue).tag(page)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Settings section")
-            .padding(.horizontal, 18)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
+            NavigationTabs(selection: $selectedSettingsPage, items: SettingsPage.allCases, title: { $0.rawValue })
+            .padding(.horizontal, 22)
+            Divider()
 
             ScrollView(showsIndicators: false) {
                 Group {
@@ -183,7 +224,7 @@ struct RootView: View {
                         diagnosticsSection
                     }
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 22)
                 .padding(.bottom, 18)
             }
             .id(selectedSettingsPage)
@@ -206,9 +247,9 @@ struct RootView: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(showingSettings ? "Settings" : "Codex Usage")
-                    .font(.system(size: 23, weight: .semibold))
-                Text(showingSettings ? selectedSettingsPage.detail : headerDetail)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 17, weight: .semibold))
+                Text(showingSettings ? selectedSettingsPage.detail : "Tokens & API cost")
+                    .font(.system(size: 11))
                     .foregroundStyle(AppColor.secondaryText)
                     .lineLimit(1)
             }
@@ -220,7 +261,7 @@ struct RootView: View {
                 .opacity(store.isRefreshing ? 0.45 : 1)
                 .disabled(store.isRefreshing)
                 HeaderActionMenu(store: store)
-                HeaderButton(symbol: "slider.horizontal.3", help: "Settings") {
+                HeaderButton(symbol: "gearshape", help: "Settings") {
                     showSettings(.general)
                 }
                 HeaderButton(symbol: "power", help: "Quit Codex Usage Monitor") {
@@ -228,136 +269,120 @@ struct RootView: View {
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
     }
 
-    private var headerDetail: String {
-        if store.isRefreshing {
-            return store.loadMessage
-        }
-        let chatLabel = store.summary.sessionCount == 1 ? "chat" : "chats"
-        let eventLabel = store.summary.eventCount == 1 ? "event" : "events"
-        return "\(store.summary.sessionCount) \(chatLabel) / \(store.summary.eventCount) \(eventLabel) / \(store.lastRefreshText)"
-    }
 
     private var summaryHero: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(scopeTitle)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(AppColor.accent)
-                        .lineLimit(1)
-                    Text(store.dateWindow.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(AppColor.secondaryText)
-                }
-                Spacer()
-                Text(store.codexHomeDisplayPath)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(AppColor.tertiaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 180)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(AppColor.control)
-                    .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
-                    .help(store.codexHomeURL.path)
-            }
-
-            HStack(alignment: .top, spacing: 14) {
+            HStack(alignment: .top, spacing: 24) {
                 PrimaryFigure(
-                    title: "Tokens",
+                    title: "Total tokens",
                     value: UsageStore.compactNumber(store.summary.tokens.total),
-                    caption: "\(store.summary.eventCount) token events"
+                    caption: store.dateWindow.title
                 )
-                Divider().background(AppColor.border)
                 PrimaryFigure(
-                    title: "Est. cost",
+                    title: "Estimated cost",
                     value: UsageStore.currency(store.summary.cost),
                     caption: costCaption
                 )
                 .help("\(UsageStore.defaultRateSourceSummary). \(UsageStore.defaultRateLimitations)")
             }
-
             if store.comparison.isVisible {
-                ComparisonStrip(comparison: store.comparison)
-            }
-
-            LazyVGrid(columns: AppStyle.twoColumns, spacing: 8) {
-                TokenChip(title: "Non-cached", value: UsageStore.compactNumber(store.summary.tokens.nonCachedInput), color: AppColor.blue)
-                TokenChip(title: "Cached", value: UsageStore.compactNumber(store.summary.tokens.cachedInput), color: AppColor.gold)
-                TokenChip(title: "Output", value: UsageStore.compactNumber(store.summary.tokens.output), color: AppColor.rose)
-                TokenChip(title: "Reasoning", value: UsageStore.compactNumber(store.summary.tokens.reasoningOutput), color: AppColor.green)
-                TokenChip(title: "Avg / 1M", value: UsageStore.currency(store.averageCostPerMillion), color: AppColor.accent)
-                TokenChip(title: "30d pace", value: UsageStore.currency(store.thirtyDayCostPace), color: AppColor.green)
+                HStack(spacing: 6) {
+                    Image(systemName: store.comparison.tokenDelta >= 0 ? "arrow.up.right" : "arrow.down.right")
+                    Text("\(UsageStore.signedPercent(store.comparison.tokenDeltaPercent)) tokens")
+                    Text("\u{00B7}")
+                    Text("\(UsageStore.signedCurrency(store.comparison.costDelta))")
+                    Text("vs \(store.comparison.label)")
+                        .foregroundStyle(AppColor.tertiaryText)
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AppColor.secondaryText)
+                .lineLimit(1)
+                .help("Previous period: \(UsageStore.compactNumber(store.comparison.previousTokens)) tokens, \(UsageStore.currency(store.comparison.previousCost))")
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: AppStyle.radius, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [AppColor.heroTop, AppColor.heroBottom],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppStyle.radius, style: .continuous)
-                .stroke(AppColor.heroBorder, lineWidth: 1)
-        )
+        .padding(.vertical, 20)
     }
 
     private var filters: some View {
-        Panel {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionTitle("Filters")
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Menu {
+                    ForEach(ScopeMode.allCases) { mode in
+                        Button {
+                            store.setScopeMode(mode)
+                        } label: {
+                            if store.scopeMode == mode {
+                                Label(mode == .all ? "All activity" : mode.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(mode == .all ? "All activity" : mode.rawValue)
+                            }
+                        }
+                    }
+                } label: {
+                    Label(store.scopeMode == .all ? "All activity" : store.scopeMode.rawValue, systemImage: "line.3.horizontal.decrease")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppColor.primaryText)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("Scope")
+                Spacer(minLength: 8)
                 Picker("Window", selection: Binding(get: {
                     store.dateWindow
-                }, set: { newValue in
-                    store.setDateWindow(newValue)
-                })) {
+                }, set: { store.setDateWindow($0) })) {
                     ForEach(DateWindow.allCases) { value in
                         Text(value.rawValue).tag(value)
                     }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-
-                HStack(spacing: 10) {
-                    Picker("Scope", selection: Binding(get: {
-                        store.scopeMode
-                    }, set: { newValue in
-                        store.setScopeMode(newValue)
-                    })) {
-                        ForEach(ScopeMode.allCases) { value in
-                            Text(value.rawValue).tag(value)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-
-                    if store.scopeMode != .all {
-                        Picker("Target", selection: Binding(get: {
-                            store.selectedScopeID
-                        }, set: { newValue in
-                            store.setSelectedScope(newValue)
-                        })) {
-                            Text("Any").tag("")
-                            ForEach(store.scopeOptions) { row in
-                                Text(row.label).tag(row.id)
-                            }
-                        }
-                        .frame(width: 180)
+                .frame(width: 236)
+            }
+            if store.scopeMode != .all {
+                Picker("Target", selection: Binding(get: {
+                    store.selectedScopeID
+                }, set: { store.setSelectedScope($0) })) {
+                    Text("Any \(store.scopeMode.rawValue.lowercased())").tag("")
+                    ForEach(store.scopeOptions) { row in
+                        Text(row.label).tag(row.id)
                     }
                 }
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+    }
+
+    private var usageComposition: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                SectionTitle("Token composition")
+                Text("Tokens")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppColor.tertiaryText)
+            }
+            StatRow(symbol: "arrow.down.left", color: AppColor.blue, label: "Non-cached input", value: UsageStore.compactNumber(store.summary.tokens.nonCachedInput))
+            StatRow(symbol: "bolt.horizontal", color: AppColor.gold, label: "Cached input", value: UsageStore.compactNumber(store.summary.tokens.cachedInput))
+            StatRow(symbol: "arrow.up.right", color: AppColor.rose, label: "Output", value: UsageStore.compactNumber(store.summary.tokens.output))
+            StatRow(symbol: "sparkles", color: AppColor.green, label: "Reasoning (included in output)", value: UsageStore.compactNumber(store.summary.tokens.reasoningOutput))
+            HStack {
+                Text("Avg / 1M")
+                Text(UsageStore.currency(store.averageCostPerMillion)).foregroundStyle(AppColor.primaryText)
+                Spacer()
+                Text("30d pace")
+                Text(UsageStore.currency(store.thirtyDayCostPace)).foregroundStyle(AppColor.primaryText)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(AppColor.secondaryText)
+            .padding(.top, 6)
+        }
+        .padding(.vertical, 16)
     }
 
     private var limits: some View {
@@ -372,8 +397,8 @@ struct RootView: View {
         let resetDisplay = UsageStore.resetCreditDisplay(snapshot, now: now)
 
         return VStack(alignment: .leading, spacing: 10) {
-            SectionTitle("Limits")
-            HStack(spacing: 8) {
+            SectionTitle("Account allowance")
+            VStack(spacing: 12) {
                 if windows.isEmpty {
                     LimitTile(
                         symbol: "gauge",
@@ -410,20 +435,16 @@ struct RootView: View {
                 )
             }
             if let credits = snapshot?.resetCredits, !credits.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Text("Reset Credit Expiry")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(AppColor.secondaryText)
-                        Spacer()
-                        Text("\(credits.count) reported")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundStyle(AppColor.tertiaryText)
+                DisclosureGroup("Reset credit expiry") {
+                    VStack(spacing: 7) {
+                        ForEach(credits) { credit in
+                            ResetCreditRowView(credit: credit, now: now)
+                        }
                     }
-                    ForEach(credits.prefix(4)) { credit in
-                        ResetCreditRowView(credit: credit, now: now)
-                    }
+                    .padding(.top, 8)
                 }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AppColor.secondaryText)
             }
         }
     }
@@ -452,17 +473,6 @@ struct RootView: View {
         }
     }
 
-    private var tokenDetails: some View {
-        Panel {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionTitle("Token Mix")
-                StatRow(symbol: "arrow.down.left", color: AppColor.blue, label: "Non-cached input", value: UsageStore.compactNumber(store.summary.tokens.nonCachedInput))
-                StatRow(symbol: "bolt.horizontal", color: AppColor.gold, label: "Cached input", value: UsageStore.compactNumber(store.summary.tokens.cachedInput))
-                StatRow(symbol: "arrow.up.right", color: AppColor.rose, label: "Output tokens", value: UsageStore.compactNumber(store.summary.tokens.output))
-                StatRow(symbol: "sparkles", color: AppColor.green, label: "Reasoning tokens", value: UsageStore.compactNumber(store.summary.tokens.reasoningOutput))
-            }
-        }
-    }
 
     private var costDetails: some View {
         Panel {
@@ -514,6 +524,7 @@ struct RootView: View {
                                 Button {
                                     store.setScopeMode(mode)
                                     store.setSelectedScope(row.id)
+                                    dashboardPage = .overview
                                 } label: {
                                     BreakdownRowView(row: row, symbol: selectedBreakdown.symbol)
                                 }
@@ -564,10 +575,8 @@ struct RootView: View {
                 HStack(spacing: 11) {
                     Image(systemName: "folder")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(AppColor.blue)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(AppColor.blue)
+                        .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Codex log folder")
@@ -601,17 +610,13 @@ struct RootView: View {
                     .help("Reset to ~/.codex")
                     .accessibilityLabel("Reset Codex log folder")
                 }
-                .padding(12)
-                .background(AppColor.row)
-                .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
+                .padding(.vertical, 12)
 
                 HStack(spacing: 11) {
                     Image(systemName: "power")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(AppColor.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(AppColor.accent)
+                        .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Launch at login")
@@ -637,17 +642,13 @@ struct RootView: View {
                     .help(appSettings.launchAtLoginDetail)
                     .accessibilityLabel("Launch at login")
                 }
-                .padding(12)
-                .background(AppColor.row)
-                .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
+                .padding(.vertical, 12)
 
                 HStack(spacing: 11) {
                     Image(systemName: "menubar.rectangle")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(AppColor.green)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(AppColor.green)
+                        .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Open popover on launch")
@@ -672,17 +673,13 @@ struct RootView: View {
                     .help(appSettings.showWindowOnLaunchDetail)
                     .accessibilityLabel("Open popover on launch")
                 }
-                .padding(12)
-                .background(AppColor.row)
-                .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
+                .padding(.vertical, 12)
 
                 HStack(spacing: 11) {
                     Image(systemName: "textformat.size")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(AppColor.gold)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(AppColor.gold)
+                        .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Menu bar display")
@@ -709,17 +706,13 @@ struct RootView: View {
                     .labelsHidden()
                     .frame(width: 150)
                 }
-                .padding(12)
-                .background(AppColor.row)
-                .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
+                .padding(.vertical, 12)
 
                 HStack(spacing: 11) {
                     Image(systemName: "bell.badge")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(AppColor.rose)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(AppColor.rose)
+                        .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Budget notifications")
@@ -744,17 +737,13 @@ struct RootView: View {
                     .help("Budget notifications")
                     .accessibilityLabel("Budget notifications")
                 }
-                .padding(12)
-                .background(AppColor.row)
-                .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
+                .padding(.vertical, 12)
 
                 HStack(spacing: 11) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(AppColor.blue)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(AppColor.blue)
+                        .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Auto refresh")
@@ -781,9 +770,7 @@ struct RootView: View {
                     .labelsHidden()
                     .frame(width: 120)
                 }
-                .padding(12)
-                .background(AppColor.row)
-                .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
+                .padding(.vertical, 12)
             }
         }
     }
@@ -1107,11 +1094,11 @@ struct RootView: View {
 
                 VStack(spacing: 8) {
                     HStack {
-                        Text("Model").frame(width: 144, alignment: .leading)
+                        Text("Model").frame(minWidth: 144, maxWidth: .infinity, alignment: .leading)
                         Text("Input").frame(width: 72, alignment: .trailing)
                         Text("Cached").frame(width: 72, alignment: .trailing)
                         Text("Output").frame(width: 72, alignment: .trailing)
-                        Text("").frame(width: 26)
+                        Text("").frame(width: 20)
                     }
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AppColor.secondaryText)
@@ -1175,6 +1162,7 @@ struct RootView: View {
             }
         }
     }
+
 
     private var scopeTitle: String {
         switch store.scopeMode {
@@ -1267,6 +1255,37 @@ private struct HeaderButton: View {
     }
 }
 
+private struct NavigationTabs<Item: Hashable & Identifiable>: View {
+    @Binding var selection: Item
+    let items: [Item]
+    let title: (Item) -> String
+
+    var body: some View {
+        HStack(spacing: 24) {
+            ForEach(items) { item in
+                Button {
+                    selection = item
+                } label: {
+                    Text(title(item))
+                        .font(.system(size: 12, weight: selection == item ? .semibold : .medium))
+                        .foregroundStyle(selection == item ? AppColor.primaryText : AppColor.secondaryText)
+                        .padding(.vertical, 12)
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .fill(selection == item ? AppColor.accent : .clear)
+                                .frame(height: 2)
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(title(item))
+                .accessibilityAddTraits(selection == item ? [.isSelected] : [])
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 private struct HeaderActionMenu: View {
     @ObservedObject var store: UsageStore
 
@@ -1309,7 +1328,7 @@ private struct Panel<Content: View>: View {
     let padding: CGFloat
     let content: Content
 
-    init(padding: CGFloat = 14, @ViewBuilder content: () -> Content) {
+    init(padding: CGFloat = 0, @ViewBuilder content: () -> Content) {
         self.padding = padding
         self.content = content()
     }
@@ -1317,12 +1336,8 @@ private struct Panel<Content: View>: View {
     var body: some View {
         content
             .padding(padding)
-            .background(AppColor.panel)
-            .overlay(
-                RoundedRectangle(cornerRadius: AppStyle.radius, style: .continuous)
-                    .stroke(AppColor.border, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: AppStyle.radius, style: .continuous))
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1411,13 +1426,13 @@ private struct PrimaryFigure: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(AppColor.secondaryText)
             Text(value)
-                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .font(.system(size: 32, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(AppColor.primaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
             Text(caption)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(AppColor.tertiaryText)
                 .lineLimit(1)
         }
@@ -1425,161 +1440,20 @@ private struct PrimaryFigure: View {
     }
 }
 
-private struct ComparisonStrip: View {
-    let comparison: UsageComparison
-
-    var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("vs \(comparison.label)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AppColor.tertiaryText)
-                    .lineLimit(1)
-                Text(previousText)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(AppColor.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            ComparisonMetric(
-                title: "Tokens",
-                value: UsageStore.signedCompactNumber(comparison.tokenDelta),
-                detail: UsageStore.signedPercent(comparison.tokenDeltaPercent),
-                color: comparison.tokenDelta >= 0 ? AppColor.gold : AppColor.green
-            )
-
-            ComparisonMetric(
-                title: "Est. cost",
-                value: UsageStore.signedCurrency(comparison.costDelta),
-                detail: UsageStore.signedPercent(comparison.costDeltaPercent),
-                color: comparison.costDelta >= 0 ? AppColor.gold : AppColor.green
-            )
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .background(AppColor.heroInset)
-        .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
-        .help(helpText)
-    }
-
-    private var previousText: String {
-        guard comparison.hasPreviousActivity else {
-            return "No previous usage"
-        }
-        return "\(UsageStore.compactNumber(comparison.previousTokens)) / \(UsageStore.currency(comparison.previousCost))"
-    }
-
-    private var helpText: String {
-        "Previous \(comparison.label): \(UsageStore.compactNumber(comparison.previousTokens)) tokens, \(UsageStore.currency(comparison.previousCost))"
-    }
-}
-
-private struct ComparisonMetric: View {
-    let title: String
-    let value: String
-    let detail: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(color)
-                .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AppColor.tertiaryText)
-                    .lineLimit(1)
-                HStack(spacing: 5) {
-                    Text(value)
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundStyle(AppColor.primaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.68)
-                    Text(detail)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(color)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
-            }
-        }
-        .frame(width: 112, alignment: .leading)
-    }
-}
-
-private struct TokenChip: View {
-    let title: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(color)
-                .frame(width: 6, height: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AppColor.tertiaryText)
-                Text(value)
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    .foregroundStyle(AppColor.primaryText)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(AppColor.heroInset)
-        .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
-    }
-}
 
 private struct TrendPanel: View {
     let rows: [DailyUsageRow]
     @Binding var metric: TrendMetric
 
-    private var maxValue: Double {
-        let maximum = rows.map(value(for:)).max() ?? 0
-        return maximum > 0 ? maximum : 1
-    }
-
-    private var countText: String {
-        guard !rows.isEmpty else { return "No events" }
-        let prefix = rows.count > 1 ? "Last " : ""
-        return "\(prefix)\(rows.count) \(rows.count == 1 ? "day" : "days")"
-    }
-
-    private var totalText: String {
-        switch metric {
-        case .tokens:
-            return UsageStore.compactNumber(rows.reduce(0) { $0 + $1.tokens.total })
-        case .cost:
-            return UsageStore.currency(rows.reduce(0) { $0 + $1.cost })
-        }
-    }
-
     private func value(for row: DailyUsageRow) -> Double {
-        switch metric {
-        case .tokens: return Double(row.tokens.total)
-        case .cost: return row.cost
-        }
+        metric == .tokens ? Double(row.tokens.total) : row.cost
     }
 
     var body: some View {
         Panel {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        SectionTitle("Daily Trend")
-                        Text("\(countText) / \(totalText)")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(AppColor.tertiaryText)
-                            .lineLimit(1)
-                    }
-                    Spacer()
+                    SectionTitle("Daily usage")
                     Picker("Trend metric", selection: $metric) {
                         ForEach(TrendMetric.allCases) { value in
                             Text(value.displayTitle).tag(value)
@@ -1587,80 +1461,46 @@ private struct TrendPanel: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 132)
+                    .frame(width: 142)
                     .accessibilityLabel("Trend metric")
                 }
-
                 if rows.isEmpty {
                     EmptyState(text: "No daily activity for this filter")
                 } else {
-                    HStack(alignment: .bottom, spacing: 7) {
-                        ForEach(rows) { row in
-                            DailyBar(row: row, maxValue: maxValue, metric: metric)
+                    Chart(rows) { row in
+                        BarMark(
+                            x: .value("Day", row.label),
+                            y: .value(metric == .tokens ? "Tokens" : "USD", value(for: row)),
+                            width: rows.count == 1 ? .fixed(28) : .ratio(0.65)
+                        )
+                        .foregroundStyle(metric == .tokens ? AppColor.accent : AppColor.blue)
+                        .cornerRadius(2)
+                        .accessibilityLabel(row.label)
+                        .accessibilityValue(metric == .tokens
+                            ? "\(UsageStore.compactNumber(row.tokens.total)) tokens"
+                            : "\(UsageStore.currency(row.cost)) estimated cost")
+                    }
+                    .chartYAxis {
+                        AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { axis in
+                            AxisGridLine().foregroundStyle(AppColor.border)
+                            AxisValueLabel {
+                                if let value = axis.as(Double.self) {
+                                    Text(metric == .tokens ? UsageStore.compactNumber(Int(min(value, Double(Int.max / 2)))) : UsageStore.currency(value))
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(AppColor.tertiaryText)
+                                }
+                            }
                         }
                     }
-                    .frame(height: 98)
-                    .padding(.top, 2)
+                    .chartXAxis {
+                        AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                            AxisValueLabel().foregroundStyle(AppColor.secondaryText)
+                        }
+                    }
+                    .frame(height: 112)
                 }
             }
         }
-    }
-}
-
-private struct DailyBar: View {
-    let row: DailyUsageRow
-    let maxValue: Double
-    let metric: TrendMetric
-
-    private var value: Double {
-        switch metric {
-        case .tokens: return Double(row.tokens.total)
-        case .cost: return row.cost
-        }
-    }
-
-    private var color: Color {
-        metric == .tokens ? AppColor.accent : AppColor.green
-    }
-
-    private var height: CGFloat {
-        guard value > 0 else {
-            return 2
-        }
-        let ratio = CGFloat(value / maxValue)
-        return max(8, 58 * ratio)
-    }
-
-    private var accessibilityValue: String {
-        switch metric {
-        case .tokens:
-            return "\(UsageStore.compactNumber(row.tokens.total)) tokens"
-        case .cost:
-            return "\(UsageStore.currency(row.cost)) estimated cost"
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Spacer(minLength: 0)
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(value > 0 ? color : AppColor.control)
-                .frame(height: height)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                )
-                .help("\(row.label): \(UsageStore.compactNumber(row.tokens.total)) tokens, \(UsageStore.currency(row.cost))")
-            Text(row.label)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(AppColor.tertiaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.label)
-        .accessibilityValue(accessibilityValue)
     }
 }
 
@@ -1672,38 +1512,28 @@ private struct LimitTile: View {
     let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 24, height: 24)
-                    .background(color)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AppColor.secondaryText)
-                    .lineLimit(1)
-            }
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(color)
+                .frame(width: 20)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 70, alignment: .leading)
             Text(value)
-                .font(.system(size: 17, weight: .bold, design: .rounded))
-                .foregroundStyle(AppColor.primaryText)
+                .font(.system(size: 14, weight: .semibold))
+                .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.8)
+                .layoutPriority(1)
+            Spacer(minLength: 8)
             Text(detail)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(AppColor.tertiaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .font(.system(size: 11))
+                .foregroundStyle(AppColor.secondaryText)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
-        .background(AppColor.panel)
-        .overlay(
-            RoundedRectangle(cornerRadius: AppStyle.radius, style: .continuous)
-                .stroke(AppColor.border, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: AppStyle.radius, style: .continuous))
+        .help("\(title): \(value). \(detail)")
     }
 }
 
@@ -1761,10 +1591,8 @@ private struct StatRow: View {
         HStack(alignment: .center, spacing: 11) {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(color)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .foregroundStyle(color)
+                .frame(width: 18, height: 18)
             Text(label)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(AppColor.secondaryText)
@@ -2147,7 +1975,7 @@ private struct RateModelField: View {
             .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 5)
-            .frame(width: 144)
+            .frame(minWidth: 144, maxWidth: .infinity)
             .background(AppColor.control)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .accessibilityLabel(accessibilityLabel)
@@ -2183,22 +2011,29 @@ private enum AppStyle {
 }
 
 enum AppColor {
-    static let background = Color(red: 0.058, green: 0.066, blue: 0.078)
-    static let panel = Color(red: 0.095, green: 0.112, blue: 0.135)
-    static let row = Color(red: 0.122, green: 0.142, blue: 0.172)
-    static let control = Color(red: 0.145, green: 0.166, blue: 0.202)
-    static let tableBackground = Color(red: 0.075, green: 0.088, blue: 0.108)
-    static let border = Color.white.opacity(0.08)
-    static let heroTop = Color(red: 0.155, green: 0.176, blue: 0.225)
-    static let heroBottom = Color(red: 0.088, green: 0.105, blue: 0.132)
-    static let heroInset = Color.white.opacity(0.055)
-    static let heroBorder = Color.white.opacity(0.11)
-    static let primaryText = Color(red: 0.92, green: 0.94, blue: 0.98)
-    static let secondaryText = Color(red: 0.66, green: 0.70, blue: 0.77)
-    static let tertiaryText = Color(red: 0.48, green: 0.53, blue: 0.60)
-    static let accent = Color(red: 0.46, green: 0.54, blue: 0.92)
-    static let green = Color(red: 0.23, green: 0.74, blue: 0.52)
-    static let blue = Color(red: 0.32, green: 0.57, blue: 0.90)
-    static let gold = Color(red: 0.88, green: 0.61, blue: 0.25)
-    static let rose = Color(red: 0.86, green: 0.35, blue: 0.48)
+    private static func adaptive(_ light: Double, _ dark: Double) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(white: isDark ? dark : light, alpha: 1)
+        })
+    }
+
+    static let background = adaptive(0.985, 0.085)
+    static let panel = adaptive(0.955, 0.105)
+    static let row = adaptive(0.95, 0.13)
+    static let control = adaptive(0.915, 0.18)
+    static let tableBackground = adaptive(0.95, 0.105)
+    static let border = adaptive(0.85, 0.22)
+    static let primaryText = adaptive(0.12, 0.95)
+    static let secondaryText = adaptive(0.36, 0.70)
+    static let tertiaryText = adaptive(0.43, 0.60)
+    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0.36, green: 0.79, blue: 0.64, alpha: 1)
+            : NSColor(red: 0.08, green: 0.43, blue: 0.32, alpha: 1)
+    })
+    static let green = accent
+    static let blue = Color(nsColor: .systemBlue)
+    static let gold = Color(nsColor: .systemOrange)
+    static let rose = Color(nsColor: .systemPink)
 }

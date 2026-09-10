@@ -133,7 +133,7 @@ def test_parse_cache_safeguards() -> None:
         "threadSpawnMarker",
         "forkedFromMarker",
         "hasTokenBreakdown",
-        'TokenChip(title: "Non-cached"',
+        'store.summary.tokens.nonCachedInput',
     ]
     for snippet in required_snippets:
         require(snippet in combined, f"parse cache safeguard missing: {snippet}")
@@ -141,13 +141,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.4.7")
-    require_equal(version, "0.4.7", "release version")
-    require_equal(build, "11", "release build")
+    version, build, errors = release_version_errors(repo, "v0.5.0")
+    require_equal(version, "0.5.0", "release version")
+    require_equal(build, "12", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.4.7" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.5.0" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)

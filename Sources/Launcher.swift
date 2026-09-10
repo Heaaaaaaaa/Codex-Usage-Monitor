@@ -136,7 +136,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
         )
         let controller = UsageHostingController(rootView: root, store: store)
         popover.contentViewController = controller
-        popover.contentSize = NSSize(width: 500, height: 710)
+        popover.contentSize = NSSize(width: 540, height: 720)
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self

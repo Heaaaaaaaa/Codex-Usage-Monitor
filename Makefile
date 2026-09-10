@@ -1,7 +1,7 @@
 APP_NAME ?= CodexUsageMonitor
 BUNDLE_IDENTIFIER ?= local.codex.usagemonitor
-VERSION ?= 0.4.7
-BUILD_NUMBER ?= 11
+VERSION ?= 0.5.0
+BUILD_NUMBER ?= 12
 MINIMUM_MACOS := 13.0
 ROOT := $(abspath ../..)
 DEFAULT_OUT_DIR := $(ROOT)/outputs
@@ -98,6 +98,14 @@ $(EXECUTABLE): prepare-info-plist $(SOURCES) Info.plist Makefile $(BUNDLE_RESOUR
 
 run: all
 	open "$(APP)"
+
+.PHONY: render-preview
+render-preview: demo-data $(BUILD_DIR)/RenderDesignPreview
+	"$(BUILD_DIR)/RenderDesignPreview" "$(DEMO_OUT)" "$(BUILD_DIR)/design-previews"
+
+$(BUILD_DIR)/RenderDesignPreview: $(TEST_DATA_SOURCES) Sources/AppActions.swift Sources/Views.swift Tools/RenderDesignPreview.swift
+	mkdir -p "$(BUILD_DIR)/ModuleCache-preview"
+	xcrun swiftc -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-preview" $(TEST_DATA_SOURCES) Sources/AppActions.swift Sources/Views.swift Tools/RenderDesignPreview.swift -o "$@" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications -framework Charts
 
 demo-data:
 	python3 Tools/MakeDemoFixture.py --out "$(DEMO_OUT)" --replace
