@@ -1,7 +1,7 @@
 APP_NAME ?= CodexUsageMonitor
 BUNDLE_IDENTIFIER ?= local.codex.usagemonitor
-VERSION ?= 0.4.6
-BUILD_NUMBER ?= 10
+VERSION ?= 0.4.7
+BUILD_NUMBER ?= 11
 MINIMUM_MACOS := 13.0
 ROOT := $(abspath ../..)
 DEFAULT_OUT_DIR := $(ROOT)/outputs
@@ -93,6 +93,7 @@ $(EXECUTABLE): prepare-info-plist $(SOURCES) Info.plist Makefile $(BUNDLE_RESOUR
 	xcrun swiftc -O -target x86_64-apple-macosx13.0 -module-cache-path "$(X86_64_MODULE_CACHE)" $(SOURCES) -o "$(X86_64_EXECUTABLE)" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
 	xcrun lipo -create -output "$(EXECUTABLE)" "$(ARM64_EXECUTABLE)" "$(X86_64_EXECUTABLE)"
 	chmod +x "$(EXECUTABLE)"
+	xattr -cr "$(APP)"
 	codesign --force --deep --sign - "$(APP)"
 
 run: all
@@ -165,9 +166,11 @@ verify-source-archive:
 	python3 "$(PUBLIC_SOURCE_VALIDATOR)" --repo "$(CURDIR)" --archive "$(SOURCE_ARCHIVE)" --archive-prefix "$(APP_NAME)-$(VERSION)"
 
 sign: all
+	xattr -cr "$(APP)"
 	codesign --force --deep --sign "$(SIGN_IDENTITY)" "$(APP)"
 
 package: all
+	xattr -cr "$(APP)"
 	rm -f "$(RELEASE_ZIP)" "$(ZIP_SHA256)"
 	ditto -c -k --norsrc --keepParent "$(APP)" "$(RELEASE_ZIP)"
 	$(MAKE) checksum-zip
@@ -176,9 +179,11 @@ package: all
 dmg: all package-dmg
 
 package-dmg: all
+	xattr -cr "$(APP)"
 	rm -rf "$(DMG_STAGING)"
 	mkdir -p "$(DMG_STAGING)"
-	ditto "$(APP)" "$(DMG_STAGING)/$(APP_NAME).app"
+	ditto --norsrc "$(APP)" "$(DMG_STAGING)/$(APP_NAME).app"
+	xattr -cr "$(DMG_STAGING)/$(APP_NAME).app"
 	ln -s /Applications "$(DMG_STAGING)/Applications"
 	rm -f "$(RELEASE_DMG)" "$(DMG_SHA256)"
 	hdiutil create -volname "Codex Usage Monitor" -srcfolder "$(DMG_STAGING)" -ov -format UDZO "$(RELEASE_DMG)"
@@ -192,6 +197,7 @@ checksum-dmg:
 	cd "$(OUT_DIR)" && shasum -a 256 "$(RELEASE_DMG_NAME)" > "$(DMG_SHA256_NAME)"
 
 sign-developer-id: require-sign-identity all
+	xattr -cr "$(APP)"
 	codesign --force --deep --options runtime --timestamp --entitlements "$(ENTITLEMENTS)" --sign "$(SIGN_IDENTITY)" "$(APP)"
 	codesign --verify --deep --strict --verbose=2 "$(APP)"
 
@@ -245,6 +251,7 @@ print-build:
 	@printf '%s\n' "$(BUILD_NUMBER)"
 
 verify-app: all
+	xattr -cr "$(APP)"
 	test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$(APP)/Contents/Info.plist")" = "$(BUNDLE_IDENTIFIER)"
 	test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$(APP)/Contents/Info.plist")" = "$(VERSION)"
 	test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$(APP)/Contents/Info.plist")" = "$(BUILD_NUMBER)"
@@ -261,7 +268,7 @@ verify-app: all
 	test "$$(sips -g pixelHeight "$(APP)/Contents/Resources/MenuBarIcon.png" | awk '/pixelHeight/ { print $$2 }')" = "36"
 	python3 Tools/ValidatePrivacyManifest.py "$(PRIVACY_MANIFEST)" "$(APP)/Contents/Resources/PrivacyInfo.xcprivacy"
 	xcrun lipo "$(EXECUTABLE)" -verify_arch arm64 x86_64
-	codesign --verify --deep --strict --verbose=2 "$(APP)"
+	python3 Tools/VerifyAppSignature.py "$(APP)"
 
 verify-privacy: all
 	python3 Tools/ValidatePrivacyManifest.py "$(PRIVACY_MANIFEST)" "$(APP)/Contents/Resources/PrivacyInfo.xcprivacy"

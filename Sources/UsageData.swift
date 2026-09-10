@@ -2604,9 +2604,10 @@ final class UsageStore: ObservableObject {
     }
 
     static let defaultRates: [ModelRate] = [
-        ModelRate(model: "gpt-5.6-sol", inputPerMillion: 5.00, cachedInputPerMillion: 0.50, outputPerMillion: 30.00),
-        ModelRate(model: "gpt-5.6-terra", inputPerMillion: 2.50, cachedInputPerMillion: 0.25, outputPerMillion: 15.00),
-        ModelRate(model: "gpt-5.6-luna", inputPerMillion: 1.00, cachedInputPerMillion: 0.10, outputPerMillion: 6.00),
+        ModelRate(model: "gpt-6-astra", inputPerMillion: 10.00, cachedInputPerMillion: 1.00, outputPerMillion: 50.00),
+        ModelRate(model: "gpt-5.6-sol", inputPerMillion: 4.00, cachedInputPerMillion: 0.40, outputPerMillion: 20.00),
+        ModelRate(model: "gpt-5.6-terra", inputPerMillion: 2.00, cachedInputPerMillion: 0.20, outputPerMillion: 12.00),
+        ModelRate(model: "gpt-5.6-luna", inputPerMillion: 0.20, cachedInputPerMillion: 0.02, outputPerMillion: 1.20),
         ModelRate(model: "gpt-5.5", inputPerMillion: 5.00, cachedInputPerMillion: 0.50, outputPerMillion: 30.00),
         ModelRate(model: "gpt-5.5-pro", inputPerMillion: 30.00, cachedInputPerMillion: 0.00, outputPerMillion: 180.00),
         ModelRate(model: "gpt-5.4", inputPerMillion: 2.50, cachedInputPerMillion: 0.25, outputPerMillion: 15.00),
@@ -2619,8 +2620,8 @@ final class UsageStore: ObservableObject {
     static let defaultRateProfileName = "OpenAI API standard short-context rates"
     static let defaultRateSourceName = "OpenAI API pricing"
     static let defaultRateSourceURL = URL(string: "https://developers.openai.com/api/docs/pricing")!
-    static let defaultRateVerifiedDate = "2026-07-10"
-    static let defaultRateLimitations = "Local logs do not expose cache writes or tool-call charges; total-only rows use the input rate; long-context, processing-mode, regional, and subscription pricing can differ."
+    static let defaultRateVerifiedDate = "2026-09-10"
+    static let defaultRateLimitations = "Local logs do not expose cache writes or tool-call charges; total-only rows use the input rate; Astra requests over 272K input tokens and other long-context, processing-mode, regional, and subscription pricing can differ."
     static let defaultRateSourceSummary = "\(defaultRateProfileName), verified \(defaultRateVerifiedDate)"
     static let defaultRateSourceDetail = "\(defaultRateSourceName) / \(defaultRateVerifiedDate)"
 
@@ -2642,7 +2643,34 @@ final class UsageStore: ObservableObject {
         if savedVersion < 3 {
             migrated = catalogOrderedRates(migrated)
         }
+        if savedVersion < 4 {
+            for defaultRate in defaultRates where legacyVersionThreeRate(for: defaultRate.model) != nil {
+                let normalizedDefault = normalizedModelIdentifier(defaultRate.model)
+                if let index = migrated.firstIndex(where: { normalizedModelIdentifier($0.model) == normalizedDefault }),
+                   migrated[index] == legacyVersionThreeRate(for: defaultRate.model) {
+                    migrated[index] = defaultRate
+                }
+            }
+            if let astra = defaultRates.first(where: { $0.model == "gpt-6-astra" }),
+               !migrated.contains(where: { normalizedModelIdentifier($0.model) == "gpt-6-astra" }) {
+                migrated.append(astra)
+            }
+            migrated = catalogOrderedRates(migrated)
+        }
         return sanitizedRates(migrated)
+    }
+
+    private static func legacyVersionThreeRate(for model: String) -> ModelRate? {
+        switch normalizedModelIdentifier(model) {
+        case "gpt-5.6-sol":
+            return ModelRate(model: "gpt-5.6-sol", inputPerMillion: 5.00, cachedInputPerMillion: 0.50, outputPerMillion: 30.00)
+        case "gpt-5.6-terra":
+            return ModelRate(model: "gpt-5.6-terra", inputPerMillion: 2.50, cachedInputPerMillion: 0.25, outputPerMillion: 15.00)
+        case "gpt-5.6-luna":
+            return ModelRate(model: "gpt-5.6-luna", inputPerMillion: 1.00, cachedInputPerMillion: 0.10, outputPerMillion: 6.00)
+        default:
+            return nil
+        }
     }
 
     @inline(never)
@@ -2760,7 +2788,7 @@ final class UsageStore: ObservableObject {
     private static let codexHomePathKey = "codexHomePath.v1"
     private static let modelRatesKey = "modelRates.v1"
     private static let modelRateCatalogVersionKey = "modelRateCatalogVersion.v1"
-    private static let defaultRateCatalogVersion = 3
+    private static let defaultRateCatalogVersion = 4
     nonisolated private static let parseCacheVersion = 5
 
     private static let byteCountFormatter: ByteCountFormatter = {

@@ -5,6 +5,7 @@ import json
 import plistlib
 import re
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,8 +81,12 @@ def parse_key_value_output(output: str) -> dict[str, list[str]]:
 
 
 def code_signature_metadata(app: Path) -> dict:
-    command_output(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
-    display = command_output(["codesign", "--display", "--verbose=4", str(app)])
+    with tempfile.TemporaryDirectory(prefix="codex-usage-manifest-") as folder:
+        clean_app = Path(folder) / app.name
+        subprocess.run(["ditto", "--norsrc", str(app), str(clean_app)], check=True)
+        subprocess.run(["xattr", "-cr", str(clean_app)], check=True)
+        command_output(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(clean_app)])
+        display = command_output(["codesign", "--display", "--verbose=4", str(clean_app)])
     values = parse_key_value_output(display)
     flags_match = re.search(r"flags=(0x[0-9a-fA-F]+)\(([^)]*)\)", display)
     flags = []
@@ -177,6 +182,13 @@ def swift_string_constant(source: str, name: str) -> str:
 
 
 def default_rates(source: str) -> list[dict]:
+    catalog = re.search(
+        r'^    static let defaultRates: \[ModelRate\] = \[\n(?P<body>.*?)^    \]$',
+        source,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if not catalog:
+        raise SystemExit("missing default model rate catalog")
     pattern = re.compile(
         r'ModelRate\(model: "([^"]+)", inputPerMillion: ([0-9.]+), '
         r'cachedInputPerMillion: ([0-9.]+), outputPerMillion: ([0-9.]+)\)'
@@ -188,7 +200,7 @@ def default_rates(source: str) -> list[dict]:
             "cachedInputPerMillion": float(match.group(3)),
             "outputPerMillion": float(match.group(4)),
         }
-        for match in pattern.finditer(source)
+        for match in pattern.finditer(catalog.group("body"))
     ]
     if not rates:
         raise SystemExit("no default model rates found")

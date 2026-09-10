@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.7 - 2026-09-10
+
+- Added GPT-6 Astra with the official Standard short-context rates of $10.00 input, $1.00 cached input, and $50.00 output per 1M tokens.
+- Refreshed the built-in GPT-5.6 Sol, Terra, and Luna rates to their current official prices.
+- Migrated untouched built-in rates automatically while preserving user-edited rates and custom rows.
+- Updated the synthetic demo data, pricing metadata, and release manifest coverage for GPT-6 Astra.
+
 ## 0.4.6 - 2026-07-30
 
 - Fixed weekly usage showing 100% left when a newer local session emitted a synthetic zero snapshot with a continuously sliding seven-day reset time.

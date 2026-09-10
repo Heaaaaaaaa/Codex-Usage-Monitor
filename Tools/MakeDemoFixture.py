@@ -10,7 +10,7 @@ DEMO_MARKER = ".codex-usage-monitor-demo"
 DEMO_VERSION = 1
 
 DEMO_SESSIONS = [
-    ("001", 0, "Atlas", "Plan the release dashboard", "gpt-5.6-sol", 2_420_000, 1_160_000, 318_000, 92_000),
+    ("001", 0, "Atlas", "Plan the release dashboard", "gpt-6-astra", 2_420_000, 1_160_000, 318_000, 92_000),
     ("002", 0, "Launchpad", "Improve onboarding copy", "gpt-5.6-terra", 1_680_000, 640_000, 246_000, 54_000),
     ("003", 1, "Northstar", "Review usage analytics", "gpt-5.6-luna", 1_140_000, 510_000, 172_000, 31_000),
     ("004", 2, "Atlas", "Refactor authentication flow", "gpt-5.6-sol", 2_080_000, 940_000, 284_000, 76_000),

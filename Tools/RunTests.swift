@@ -907,14 +907,18 @@ private func testRateDraftsStayTransactionalUntilApplied() throws {
 @MainActor
 private func testDefaultRateSourceAndReset() throws {
     try require(UsageStore.defaultRateSourceSummary.contains("OpenAI API standard short-context rates"), "default rate source profile")
-    try require(UsageStore.defaultRateSourceSummary.contains("2026-07-10"), "default rate source date")
+    try require(UsageStore.defaultRateSourceSummary.contains("2026-09-10"), "default rate source date")
     try requireEqual(UsageStore.defaultRateSourceURL.absoluteString, "https://developers.openai.com/api/docs/pricing", "default rate source URL")
     try require(UsageStore.defaultRateLimitations.contains("cache writes"), "default rate limitations disclose missing cache writes")
+    try require(UsageStore.defaultRateLimitations.contains("Astra requests over 272K"), "default rate limitations disclose Astra long-context multiplier")
     try require(UsageStore.defaultRateLimitations.contains("total-only rows use the input rate"), "default rate limitations disclose total-only estimate basis")
-    try requireEqual(UsageStore.defaultRates.first?.model, "gpt-5.6-sol", "latest default model is first")
-    try requireApprox(UsageStore.defaultRates.first?.inputPerMillion ?? -1, 5.0, "GPT-5.6 Sol input rate")
-    try requireApprox(UsageStore.defaultRates.first?.cachedInputPerMillion ?? -1, 0.5, "GPT-5.6 Sol cached rate")
-    try requireApprox(UsageStore.defaultRates.first?.outputPerMillion ?? -1, 30.0, "GPT-5.6 Sol output rate")
+    try requireEqual(UsageStore.defaultRates.first?.model, "gpt-6-astra", "latest default model is first")
+    try requireApprox(UsageStore.defaultRates.first?.inputPerMillion ?? -1, 10.0, "GPT-6 Astra input rate")
+    try requireApprox(UsageStore.defaultRates.first?.cachedInputPerMillion ?? -1, 1.0, "GPT-6 Astra cached rate")
+    try requireApprox(UsageStore.defaultRates.first?.outputPerMillion ?? -1, 50.0, "GPT-6 Astra output rate")
+    try requireApprox(UsageStore.defaultRates.first { $0.model == "gpt-5.6-sol" }?.inputPerMillion ?? -1, 4.0, "GPT-5.6 Sol input rate")
+    try requireApprox(UsageStore.defaultRates.first { $0.model == "gpt-5.6-terra" }?.outputPerMillion ?? -1, 12.0, "GPT-5.6 Terra output rate")
+    try requireApprox(UsageStore.defaultRates.first { $0.model == "gpt-5.6-luna" }?.cachedInputPerMillion ?? -1, 0.02, "GPT-5.6 Luna cached rate")
     try requireApprox(UsageStore.defaultRates.first { $0.model == "gpt-5.5-pro" }?.cachedInputPerMillion ?? -1, 0, "Pro cached rate remains unconfigured")
 
     let preferences = isolatedPreferences()
@@ -942,13 +946,14 @@ private func testDefaultRateCatalogMigration() throws {
     preferences.set(try JSONEncoder().encode(legacyRates), forKey: "modelRates.v1")
 
     let migrated = UsageStore(preferences: preferences)
-    try requireEqual(preferences.integer(forKey: "modelRateCatalogVersion.v1"), 3, "rate catalog migration version")
+    try requireEqual(preferences.integer(forKey: "modelRateCatalogVersion.v1"), 4, "rate catalog migration version")
     try requireEqual(migrated.rates.count, UsageStore.defaultRates.count + 1, "migration merges missing defaults once")
-    try requireEqual(migrated.rates.first?.model, "gpt-5.6-sol", "migration uses current catalog order")
+    try requireEqual(migrated.rates.first?.model, "gpt-6-astra", "migration uses current catalog order")
     try requireEqual(migrated.rates.last?.model, "custom-model", "migration keeps custom rows after built-ins")
     try requireApprox(migrated.rates.first { $0.model == "gpt-5.5" }?.inputPerMillion ?? -1, 7.0, "migration preserves edited rows")
     try requireApprox(migrated.rates.first { $0.model == "gpt-5.5-pro" }?.cachedInputPerMillion ?? -1, 0, "migration corrects untouched legacy Pro row")
-    try requireApprox(migrated.rates.first { $0.model == "gpt-5.6-sol" }?.inputPerMillion ?? -1, 5.0, "migration replaces GPT-5.6 placeholder")
+    try requireApprox(migrated.rates.first { $0.model == "gpt-5.6-sol" }?.inputPerMillion ?? -1, 4.0, "migration replaces GPT-5.6 placeholder")
+    try require(migrated.rates.contains { $0.model == "gpt-6-astra" }, "migration adds GPT-6 Astra")
     try require(migrated.rates.contains { $0.model == "gpt-5.6-terra" }, "migration adds GPT-5.6 Terra")
     try require(migrated.rates.contains { $0.model == "gpt-5.6-luna" }, "migration adds GPT-5.6 Luna")
     try require(migrated.rates.contains { $0.model == "custom-model" }, "migration preserves custom rows")
@@ -970,10 +975,26 @@ private func testDefaultRateCatalogMigration() throws {
     versionTwoPreferences.set(try JSONEncoder().encode(versionTwoRates), forKey: "modelRates.v1")
     versionTwoPreferences.set(2, forKey: "modelRateCatalogVersion.v1")
     let reordered = UsageStore(preferences: versionTwoPreferences)
-    try requireEqual(versionTwoPreferences.integer(forKey: "modelRateCatalogVersion.v1"), 3, "version two rates advance to version three")
-    try requireEqual(reordered.rates.first?.model, "gpt-5.6-sol", "version three reorders built-in rows")
-    try requireEqual(reordered.rates.last?.model, "custom-first", "version three preserves custom row ordering")
-    try require(!reordered.rates.contains { $0.model == "gpt-5.6-luna" }, "version three does not resurrect removed rows")
+    try requireEqual(versionTwoPreferences.integer(forKey: "modelRateCatalogVersion.v1"), 4, "version two rates advance to version four")
+    try requireEqual(reordered.rates.first?.model, "gpt-6-astra", "version four reorders built-in rows")
+    try requireEqual(reordered.rates.last?.model, "custom-first", "version four preserves custom row ordering")
+    try require(!reordered.rates.contains { $0.model == "gpt-5.6-luna" }, "version four does not resurrect removed rows")
+
+    let versionThreePreferences = isolatedPreferences()
+    let versionThreeRates = [
+        ModelRate(model: "gpt-5.6-sol", inputPerMillion: 9.00, cachedInputPerMillion: 0.90, outputPerMillion: 45.00),
+        ModelRate(model: "gpt-5.6-terra", inputPerMillion: 2.50, cachedInputPerMillion: 0.25, outputPerMillion: 15.00),
+        ModelRate(model: "gpt-5.6-luna", inputPerMillion: 1.00, cachedInputPerMillion: 0.10, outputPerMillion: 6.00),
+        ModelRate(model: "custom-model", inputPerMillion: 3.00, cachedInputPerMillion: 0.30, outputPerMillion: 6.00)
+    ]
+    versionThreePreferences.set(try JSONEncoder().encode(versionThreeRates), forKey: "modelRates.v1")
+    versionThreePreferences.set(3, forKey: "modelRateCatalogVersion.v1")
+    let repriced = UsageStore(preferences: versionThreePreferences)
+    try requireEqual(repriced.rates.first?.model, "gpt-6-astra", "version four inserts Astra first")
+    try requireApprox(repriced.rates.first { $0.model == "gpt-5.6-sol" }?.inputPerMillion ?? -1, 9.0, "version four preserves edited Sol rate")
+    try requireApprox(repriced.rates.first { $0.model == "gpt-5.6-terra" }?.inputPerMillion ?? -1, 2.0, "version four refreshes untouched Terra rate")
+    try requireApprox(repriced.rates.first { $0.model == "gpt-5.6-luna" }?.outputPerMillion ?? -1, 1.2, "version four refreshes untouched Luna rate")
+    try requireEqual(repriced.rates.last?.model, "custom-model", "version four preserves custom rows")
 }
 
 @MainActor

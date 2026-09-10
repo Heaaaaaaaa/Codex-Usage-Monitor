@@ -81,6 +81,9 @@ def test_menu_bar_bundle_metadata() -> None:
     for snippet in required_snippets:
         require(snippet in combined, f"menu-bar popover safeguard missing: {snippet}")
     require("NSPanel(" not in launcher, "dashboard must be hosted in a menu-bar popover, not a utility panel")
+    require('xattr -cr "$(APP)"' in makefile, "app bundle metadata must be cleared before signing")
+    require('ditto --norsrc "$(APP)"' in makefile, "disk-image staging must omit extended metadata")
+    require('python3 Tools/VerifyAppSignature.py "$(APP)"' in makefile, "signature verification must use a clean app copy")
     require((repo / "Resources/MenuBarIcon.png").is_file(), "menu-bar template icon must be generated and tracked")
 
     watcher_limit = re.search(r"maxWatchedSessionFiles = (\d+)", launcher)
@@ -138,13 +141,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.4.6")
-    require_equal(version, "0.4.6", "release version")
-    require_equal(build, "10", "release build")
+    version, build, errors = release_version_errors(repo, "v0.4.7")
+    require_equal(version, "0.4.7", "release version")
+    require_equal(build, "11", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.4.6" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.4.7" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)
@@ -209,9 +212,12 @@ def test_publish_workflow_safeguards() -> None:
 def test_pricing_manifest_metadata() -> None:
     repo = Path(__file__).resolve().parent.parent
     pricing = pricing_metadata(repo)
-    require_equal(pricing["verifiedDate"], "2026-07-10", "pricing verification date")
-    require_equal(len(pricing["rates"]), 10, "manifest includes only shipped default rates")
-    require_equal(pricing["rates"][0]["model"], "gpt-5.6-sol", "manifest includes GPT-5.6 Sol")
+    require_equal(pricing["verifiedDate"], "2026-09-10", "pricing verification date")
+    require_equal(len(pricing["rates"]), 11, "manifest includes only shipped default rates")
+    require_equal(pricing["rates"][0]["model"], "gpt-6-astra", "manifest includes GPT-6 Astra")
+    require_equal(pricing["rates"][0]["inputPerMillion"], 10.0, "manifest includes Astra input rate")
+    require_equal(pricing["rates"][0]["cachedInputPerMillion"], 1.0, "manifest includes Astra cached rate")
+    require_equal(pricing["rates"][0]["outputPerMillion"], 50.0, "manifest includes Astra output rate")
     require("cache writes" in pricing["limitations"], "manifest discloses cache-write limitation")
     pro_rate = next(rate for rate in pricing["rates"] if rate["model"] == "gpt-5.5-pro")
     require_equal(pro_rate["cachedInputPerMillion"], 0.0, "manifest does not invent a Pro cached-input rate")
@@ -247,7 +253,7 @@ def test_demo_fixture_generation() -> None:
                     token_events.append(row)
 
         require_equal(len(token_events), len(DEMO_SESSIONS), "one token event per demo chat")
-        require_equal(models, {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}, "demo uses priced models")
+        require_equal(models, {"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}, "demo uses priced models")
         require_equal(
             projects,
             {"/Users/demo/Projects/Atlas", "/Users/demo/Projects/Launchpad", "/Users/demo/Projects/Northstar"},
