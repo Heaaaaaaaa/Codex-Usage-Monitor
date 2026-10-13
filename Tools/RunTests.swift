@@ -375,6 +375,163 @@ private func testTodayWindowFiltersCurrentCalendarDay() throws {
 }
 
 @MainActor
+private func testThirtyDayTrendIncludesWholeSelectedWindow() throws {
+    let store = UsageStore(preferences: isolatedPreferences())
+    store.dateWindow = .thirtyDays
+    store.entries = [0, 15, 29, 30].map { days in
+        makeEntry(id: "day-\(days)", daysAgo: days, sessionID: "chat", chatTitle: "Trend",
+                  projectPath: "/tmp/Trend", model: "gpt-6-astra",
+                  tokens: UsageTokens(input: 100, cachedInput: 0, output: 10, reasoningOutput: 0, total: 110))
+    }
+    store.recompute()
+    try requireEqual(store.dailyRows.count, 30, "30-day chart includes every selected calendar day")
+    try requireEqual(store.dailyRows.first?.tokens.total, 110, "oldest selected day is visible")
+    try requireEqual(store.dailyRows.filter { $0.tokens.total > 0 }.count, 3, "30-day chart includes usage older than two weeks")
+    try requireEqual(store.dailyRows.reduce(0) { $0 + $1.tokens.total }, store.summary.tokens.total, "30-day chart token sum matches summary")
+    try requireApprox(store.dailyRows.reduce(0) { $0 + $1.cost }, store.summary.cost, "30-day chart cost sum matches summary")
+}
+
+@MainActor
+private func testRateLookupInvalidatesAfterEveryRateEdit() throws {
+    let store = UsageStore(preferences: isolatedPreferences())
+    store.dateWindow = .lifetime
+    let alias = "openai/gpt-6-astra-2026-09-10"
+    store.entries = [makeEntry(id: "rate-edit", daysAgo: 0, sessionID: "chat", chatTitle: "Rates",
+                              projectPath: "/tmp/Rates", model: alias,
+                              tokens: UsageTokens(input: 100, cachedInput: 20, output: 10, reasoningOutput: 0, total: 110))]
+    store.rates = []
+    store.recompute()
+    try requireEqual(store.pricingCoverage.pricedTokens, 0, "missing rate starts unpriced")
+    store.rates = [ModelRate(model: "gpt-6-astra", inputPerMillion: 10, cachedInputPerMillion: 1, outputPerMillion: 50)]
+    store.recompute()
+    try requireApprox(store.summary.cost, 0.00132, "adding a rate invalidates cached misses")
+    store.rates[0].inputPerMillion = 20
+    store.recompute()
+    try requireApprox(store.summary.cost, 0.00212, "in-place edits invalidate resolved aliases")
+    store.rates.append(ModelRate(model: alias, inputPerMillion: 1, cachedInputPerMillion: 1, outputPerMillion: 1))
+    store.recompute()
+    try requireApprox(store.summary.cost, 0.00011, "exact snapshot overrides canonical price")
+    store.rates.removeLast()
+    store.recompute()
+    try requireApprox(store.summary.cost, 0.00212, "deleting an override restores canonical pricing")
+    store.rates.removeAll()
+    store.recompute()
+    try requireApprox(store.summary.cost, 0, "removing all rates clears cached prices")
+    try requireEqual(store.unpricedModelNames, [alias], "coverage agrees with rate removal")
+    store.applyRates([])
+    try requireApprox(store.summary.cost, 0.00132, "applying an empty catalog restores official defaults")
+}
+
+@MainActor
+private func testRecentActivitySelectsNewestAndPreservesTies() throws {
+    let store = UsageStore(preferences: isolatedPreferences())
+    store.dateWindow = .lifetime
+    let now = Date()
+    store.entries = (0..<12).map { index in
+        UsageEntry(id: "event-\(index)", timestamp: now.addingTimeInterval(index >= 7 ? 0 : -Double(index) * 3600),
+                   sessionID: "chat", chatTitle: "Recent", projectPath: "/tmp/Recent", model: "gpt-6-astra",
+                   tokens: UsageTokens(input: 100, cachedInput: 0, output: 10, reasoningOutput: 0, total: 110),
+                   sourceFile: "synthetic.jsonl:\(index)")
+    }
+    store.recompute()
+    try requireEqual(store.recentRows.map(\.id), ["event-0", "event-7", "event-8", "event-9", "event-10", "event-11"], "recent activity is chronological and stable for equal timestamps")
+    try requireEqual(store.summary.eventCount, 12, "recent selection does not truncate summary")
+    store.entries.removeAll()
+    store.recompute()
+    try require(store.recentRows.isEmpty, "empty history clears recent activity")
+}
+
+@MainActor
+private func testUnfilteredBreakdownsMatchCompleteOptions() throws {
+    let store = UsageStore(preferences: isolatedPreferences())
+    store.dateWindow = .lifetime
+    store.entries = (0..<12).reversed().map { index in
+        makeEntry(id: "row-\(index)", daysAgo: 0, sessionID: "chat-\(index)", chatTitle: "Chat \(index)",
+                  projectPath: "/tmp/Project \(index)", model: "model-\(index)",
+                  tokens: UsageTokens(input: 100, cachedInput: 0, output: 0, reasoningOutput: 0, total: 100))
+    }
+    for mode in ScopeMode.allCases {
+        store.scopeMode = mode
+        store.selectedScopeID = ""
+        store.recompute()
+        try requireEqual(store.projectRows.map(\.id), Array(store.projectOptionRows.prefix(8)).map(\.id), "unfiltered project rows match options")
+        try requireEqual(store.chatRows.map(\.id), Array(store.chatOptionRows.prefix(8)).map(\.id), "unfiltered chat rows match options")
+        try requireEqual(store.modelRows.map(\.id), Array(store.modelOptionRows.prefix(8)).map(\.id), "unfiltered model rows match options")
+        try requireEqual(store.projectRows.map(\.id), store.projectOptionRows.map(\.id).sorted().prefix(8).map { $0 }, "tied rows keep deterministic ordering")
+    }
+    store.scopeMode = .project
+    store.selectedScopeID = "/tmp/Project 1"
+    store.recompute()
+    try requireEqual(store.projectRows.map(\.id), ["/tmp/Project 1"], "a selected scope still gets its own breakdown")
+    try requireEqual(store.projectOptionRows.count, 12, "scope picker retains all options")
+}
+
+@MainActor
+private func testLogDiscoveryKeepsBoundedNewestFiles() throws {
+    let root = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var files: [(url: URL, modifiedAt: Date)] = []
+    for index in 0..<180 {
+        let folder = index.isMultiple(of: 2) ? "sessions" : "archived_sessions"
+        let url = root.appendingPathComponent("\(folder)/file-\(index).jsonl")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: url)
+        let modifiedAt = Date(timeIntervalSince1970: Double(index / 3))
+        try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: url.path)
+        files.append((url, modifiedAt))
+    }
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("sessions/not-a-file.jsonl"), withIntermediateDirectories: true)
+    let expected = files.sorted { lhs, rhs in
+        lhs.modifiedAt == rhs.modifiedAt ? lhs.url.path > rhs.url.path : lhs.modifiedAt > rhs.modifiedAt
+    }.prefix(64).map { $0.url.resolvingSymlinksInPath().path }
+    try requireEqual(SessionLogDiscovery.recentFiles(codexHome: root).map { $0.resolvingSymlinksInPath().path }, expected, "bounded discovery matches full-sort results, including timestamp ties")
+    try require(SessionLogDiscovery.candidates(codexHome: root).count <= 68, "discovery leaves file descriptor headroom")
+}
+
+@MainActor
+private func testLogWatcherRejectsObsoleteDiscoveryAndReopensReplacedFiles() throws {
+    let root = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let oldHome = root.appendingPathComponent("old")
+    let newHome = root.appendingPathComponent("new")
+    try FileManager.default.createDirectory(at: oldHome, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: newHome, withIntermediateDirectories: true)
+    let oldFile = oldHome.appendingPathComponent("old.jsonl")
+    let newFile = newHome.appendingPathComponent("new.jsonl")
+    try Data().write(to: oldFile)
+    try Data().write(to: newFile)
+    let began = DispatchSemaphore(value: 0)
+    let unblock = DispatchSemaphore(value: 0)
+    let watcher = CodexLogWatcher { home in
+        guard !Thread.isMainThread else { return [] }
+        if home == oldHome.standardizedFileURL {
+            began.signal()
+            _ = unblock.wait(timeout: .now() + 5)
+            return [oldFile]
+        }
+        return [newFile]
+    }
+    defer { watcher.stop(); unblock.signal() }
+    watcher.start(codexHome: oldHome)
+    try require(waitUntil(timeout: 2) { began.wait(timeout: .now()) == .success }, "discovery starts on a background queue")
+    watcher.start(codexHome: newHome)
+    unblock.signal()
+    try require(waitUntil(timeout: 3) { watcher.watchedPaths == Set([newFile.path]) }, "obsolete discovery cannot reattach the old folder")
+    try FileManager.default.removeItem(at: newFile)
+    try require(waitUntil(timeout: 2) { watcher.watchedPaths.isEmpty }, "deleted file retires its old descriptor")
+    try Data().write(to: newFile)
+    watcher.start(codexHome: newHome)
+    try require(waitUntil(timeout: 2) { watcher.watchedPaths == Set([newFile.path]) }, "replaced path can be watched again")
+    var changes = 0
+    watcher.onChange = { changes += 1 }
+    try appendJSONL(newFile, ["test": "one"])
+    try appendJSONL(newFile, ["test": "two"])
+    try require(waitUntil(timeout: 3) { changes == 1 }, "file writes are debounced into a main-actor callback")
+    watcher.stop()
+    try require(watcher.watchedPaths.isEmpty, "stop closes every watch")
+}
+
+@MainActor
 private func testCalendarWindowBoundaries() throws {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(identifier: "Asia/Kuala_Lumpur") ?? .current
@@ -2245,6 +2402,12 @@ private struct RunTests {
             ("seven-day summary and cost", testSevenDaySummaryAndCost),
             ("today window", testTodayWindowFiltersCurrentCalendarDay),
             ("calendar window boundaries", testCalendarWindowBoundaries),
+            ("complete 30-day trend", testThirtyDayTrendIncludesWholeSelectedWindow),
+            ("rate lookup invalidation", testRateLookupInvalidatesAfterEveryRateEdit),
+            ("bounded recent activity", testRecentActivitySelectsNewestAndPreservesTies),
+            ("reused unfiltered breakdowns", testUnfilteredBreakdownsMatchCompleteOptions),
+            ("bounded log discovery", testLogDiscoveryKeepsBoundedNewestFiles),
+            ("background log watcher lifecycle", testLogWatcherRejectsObsoleteDiscoveryAndReopensReplacedFiles),
             ("period comparison scope", testComparisonUsesSelectedScope),
             ("scope filtering", testScopeFiltering),
             ("complete scope option lists", testScopeOptionsIncludeAllProjectsChatsAndModels),

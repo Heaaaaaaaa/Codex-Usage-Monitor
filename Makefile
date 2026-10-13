@@ -1,7 +1,7 @@
 APP_NAME ?= CodexUsageMonitor
 BUNDLE_IDENTIFIER ?= local.codex.usagemonitor
-VERSION ?= 0.5.0
-BUILD_NUMBER ?= 12
+VERSION ?= 0.5.1
+BUILD_NUMBER ?= 13
 MINIMUM_MACOS := 13.0
 ROOT := $(abspath ../..)
 DEFAULT_OUT_DIR := $(ROOT)/outputs
@@ -47,7 +47,7 @@ BUNDLE_RESOURCES := $(APP_ICON) $(MENU_BAR_ICON) Resources/PrivacyInfo.xcprivacy
 PRIVACY_MANIFEST := Resources/PrivacyInfo.xcprivacy
 ENTITLEMENTS := Resources/Release.entitlements
 DATA_SOURCES := Sources/UsageData.swift
-TEST_DATA_SOURCES := Sources/UsageData.swift Sources/AppSettings.swift
+TEST_DATA_SOURCES := Sources/UsageData.swift Sources/AppSettings.swift Sources/CodexLogWatcher.swift
 DIAGNOSTIC := $(BUILD_DIR)/DumpSummary
 DIAGNOSTIC_CACHE := $(BUILD_DIR)/diagnostic-usage-cache.json
 TEST_RUNNER := $(BUILD_DIR)/RunTests
@@ -71,16 +71,22 @@ assets: $(APP_ICON) $(MENU_BAR_ICON)
 $(APP_ICON) $(MENU_BAR_ICON): Tools/MakeAppIcon.py
 	python3 Tools/MakeAppIcon.py
 
-prepare-info-plist: Info.plist Makefile
-	mkdir -p "$(BUILD_DIR)"
-	cp Info.plist "$(PREPARED_INFO_PLIST)"
-	/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $(APP_NAME)" "$(PREPARED_INFO_PLIST)"
-	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(BUNDLE_IDENTIFIER)" "$(PREPARED_INFO_PLIST)"
-	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" "$(PREPARED_INFO_PLIST)"
-	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(BUILD_NUMBER)" "$(PREPARED_INFO_PLIST)"
-	/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $(MINIMUM_MACOS)" "$(PREPARED_INFO_PLIST)"
+prepare-info-plist: $(PREPARED_INFO_PLIST)
 
-$(EXECUTABLE): prepare-info-plist $(SOURCES) Info.plist Makefile $(BUNDLE_RESOURCES) $(APP_ICON)
+.PHONY: FORCE
+FORCE:
+
+$(PREPARED_INFO_PLIST): Info.plist Makefile FORCE
+	mkdir -p "$(BUILD_DIR)"
+	cp Info.plist "$(PREPARED_INFO_PLIST).tmp"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $(APP_NAME)" "$(PREPARED_INFO_PLIST).tmp"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(BUNDLE_IDENTIFIER)" "$(PREPARED_INFO_PLIST).tmp"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" "$(PREPARED_INFO_PLIST).tmp"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(BUILD_NUMBER)" "$(PREPARED_INFO_PLIST).tmp"
+	/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $(MINIMUM_MACOS)" "$(PREPARED_INFO_PLIST).tmp"
+	@if cmp -s "$(PREPARED_INFO_PLIST).tmp" "$(PREPARED_INFO_PLIST)"; then rm "$(PREPARED_INFO_PLIST).tmp"; else mv "$(PREPARED_INFO_PLIST).tmp" "$(PREPARED_INFO_PLIST)"; fi
+
+$(EXECUTABLE): $(PREPARED_INFO_PLIST) $(SOURCES) Info.plist Makefile $(BUNDLE_RESOURCES) $(APP_ICON)
 	mkdir -p "$(MACOS_DIR)"
 	rm -rf "$(RESOURCES_DIR)"
 	mkdir -p "$(RESOURCES_DIR)"
@@ -98,6 +104,14 @@ $(EXECUTABLE): prepare-info-plist $(SOURCES) Info.plist Makefile $(BUNDLE_RESOUR
 
 run: all
 	open "$(APP)"
+
+.PHONY: benchmark
+benchmark: $(BUILD_DIR)/BenchmarkSummary
+	"$(BUILD_DIR)/BenchmarkSummary" 30000
+
+$(BUILD_DIR)/BenchmarkSummary: $(DATA_SOURCES) Tools/BenchmarkSummary.swift
+	mkdir -p "$(BUILD_DIR)/ModuleCache-benchmark"
+	xcrun swiftc -O -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-benchmark" $(DATA_SOURCES) Tools/BenchmarkSummary.swift -o "$@" -framework SwiftUI -framework Combine
 
 .PHONY: render-preview
 render-preview: demo-data $(BUILD_DIR)/RenderDesignPreview

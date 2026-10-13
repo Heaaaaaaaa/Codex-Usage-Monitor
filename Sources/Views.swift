@@ -1445,6 +1445,11 @@ private struct TrendPanel: View {
     let rows: [DailyUsageRow]
     @Binding var metric: TrendMetric
 
+    private var axisLabels: [String] {
+        guard rows.count > 7 else { return rows.map(\.label) }
+        return (0..<5).map { rows[(2 * $0 + 1) * rows.count / 10].label }
+    }
+
     private func value(for row: DailyUsageRow) -> Double {
         metric == .tokens ? Double(row.tokens.total) : row.cost
     }
@@ -1493,7 +1498,7 @@ private struct TrendPanel: View {
                         }
                     }
                     .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                        AxisMarks(values: axisLabels) { _ in
                             AxisValueLabel().foregroundStyle(AppColor.secondaryText)
                         }
                     }

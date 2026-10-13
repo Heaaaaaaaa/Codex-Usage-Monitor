@@ -21,7 +21,7 @@ struct RenderDesignPreview {
             preferences: preferences,
             cacheURL: output.appendingPathComponent("preview-cache.json")
         )
-        store.setDateWindow(.sevenDays)
+        store.dateWindow = .lifetime
         store.refresh()
         let deadline = Date().addingTimeInterval(15)
         while store.isRefreshing && Date() < deadline {
@@ -33,6 +33,7 @@ struct RenderDesignPreview {
         let scenes: [(String, ColorScheme, Double, DashboardPage, SettingsPage?)] = [
             ("overview-dark", .dark, 720, .overview, nil),
             ("overview-light", .light, 720, .overview, nil),
+            ("overview-30-days", .dark, 720, .overview, nil),
             ("overview-compact", .dark, 580, .overview, nil),
             ("activity", .dark, 720, .activity, nil),
             ("breakdown", .dark, 720, .breakdown, nil),
@@ -43,6 +44,8 @@ struct RenderDesignPreview {
             ("diagnostics", .dark, 720, .overview, .diagnostics)
         ]
         for (name, scheme, height, page, settings) in scenes {
+            store.dateWindow = name == "overview-30-days" ? .thirtyDays : .sevenDays
+            store.recompute()
             let root = RootView(store: store, appSettings: AppSettings(preferences: preferences), onClose: {}, onQuit: {}, initialPage: page, initialSettingsPage: settings)
                 .environment(\.colorScheme, scheme)
             let host = NSHostingView(rootView: root)

@@ -7,13 +7,21 @@ final class UsageHostingController: NSHostingController<RootView>, NSTouchBarDel
     private var touchBarSummaryLabel: NSTextField?
     private var touchBarWindowControl: NSSegmentedControl?
     private var touchBarCancellable: AnyCancellable?
+    private var touchBarUpdateScheduled = false
 
     init(rootView: RootView, store: UsageStore) {
         self.store = store
         super.init(rootView: rootView)
         touchBarCancellable = store.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.updateTouchBarControls()
+            guard let self, !self.touchBarUpdateScheduled,
+                  self.touchBarSummaryLabel != nil || self.touchBarWindowControl != nil else {
+                return
+            }
+            self.touchBarUpdateScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.touchBarUpdateScheduled = false
+                self.updateTouchBarControls()
             }
         }
     }

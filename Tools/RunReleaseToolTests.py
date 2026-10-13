@@ -61,6 +61,7 @@ def test_menu_bar_bundle_metadata() -> None:
         info = plistlib.load(handle)
     makefile = (repo / "Makefile").read_text(encoding="utf-8")
     launcher = (repo / "Sources/Launcher.swift").read_text(encoding="utf-8")
+    watcher = (repo / "Sources/CodexLogWatcher.swift").read_text(encoding="utf-8")
     views = (repo / "Sources/Views.swift").read_text(encoding="utf-8")
     icon_tool = (repo / "Tools/MakeAppIcon.py").read_text(encoding="utf-8")
 
@@ -86,10 +87,10 @@ def test_menu_bar_bundle_metadata() -> None:
     require('python3 Tools/VerifyAppSignature.py "$(APP)"' in makefile, "signature verification must use a clean app copy")
     require((repo / "Resources/MenuBarIcon.png").is_file(), "menu-bar template icon must be generated and tracked")
 
-    watcher_limit = re.search(r"maxWatchedSessionFiles = (\d+)", launcher)
+    watcher_limit = re.search(r"maxWatchedSessionFiles = (\d+)", watcher)
     require(watcher_limit is not None, "log watcher descriptor budget must be explicit")
     require(int(watcher_limit.group(1)) <= 64, "log watcher must leave descriptor headroom for AppKit and SwiftUI")
-    require("queue.sync {}" in launcher, "canceled log watchers must drain before a restart")
+    require("queue.sync {}" in watcher, "canceled log watchers must drain before a restart")
 
 
 def test_strict_concurrency_gate() -> None:
@@ -141,13 +142,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.5.0")
-    require_equal(version, "0.5.0", "release version")
-    require_equal(build, "12", "release build")
+    version, build, errors = release_version_errors(repo, "v0.5.1")
+    require_equal(version, "0.5.1", "release version")
+    require_equal(build, "13", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.5.0" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.5.1" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)

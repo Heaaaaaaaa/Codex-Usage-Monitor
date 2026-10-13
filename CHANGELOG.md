@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1 - 2026-10-13
+
+- Cached model-rate resolution, reused unfiltered breakdowns, and selected only the newest six activity events without sorting the entire history.
+- Moved session-file discovery off the UI thread, retained unchanged watches, and retired deleted or replaced file descriptors safely.
+- Reconciled watches on periodic refresh so newly created sessions become eligible for file-change updates.
+- Coalesced Touch Bar updates and skipped them when no Touch Bar controls exist.
+- Fixed the 30-day chart to show all 30 selected calendar days with evenly spaced, readable axis labels.
+- Avoided recompiling unchanged app code during packaging while still rebuilding for changed bundle metadata.
+- Added synthetic performance benchmarks and regression coverage for rates, filtering, charts, and watcher lifecycle.
+
 ## 0.5.0 - 2026-09-10
 
 - Redesigned the native popover with compact totals, pinned filters, and separate Overview, Activity, and Breakdown views.

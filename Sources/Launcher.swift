@@ -79,7 +79,6 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
 
     deinit {
         refreshTimer?.invalidate()
-        logWatcher.stop()
     }
 
     func show() {
@@ -355,7 +354,9 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
     }
 
     @objc private func refreshTimerDidFire(_ timer: Timer) {
-        store.refreshInBackgroundIfIdle()
+        if store.refreshInBackgroundIfIdle() {
+            restartLogWatcher()
+        }
     }
 
     private func restartLogWatcher() {
@@ -610,110 +611,4 @@ private final class BudgetNotificationController: NSObject, @preconcurrency UNUs
     ) {
         completionHandler([.banner, .sound])
     }
-}
-
-private final class CodexLogWatcher {
-    var onChange: (@MainActor @Sendable () -> Void)?
-
-    private let queue = DispatchQueue(label: "CodexUsageMonitor.LogWatcher")
-    private var sources: [DispatchSourceFileSystemObject] = []
-    private var pendingChange: DispatchWorkItem?
-
-    deinit {
-        stop()
-    }
-
-    func start(codexHome: URL) {
-        stop()
-
-        let watchedRoots = [
-            codexHome,
-            codexHome.appendingPathComponent("sessions"),
-            codexHome.appendingPathComponent("archived_sessions"),
-            codexHome.appendingPathComponent("session_index.jsonl")
-        ]
-        let candidates = watchedRoots + recentSessionLogFiles(codexHome: codexHome)
-
-        for url in candidates {
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                continue
-            }
-            watch(url)
-        }
-    }
-
-    func stop() {
-        pendingChange?.cancel()
-        pendingChange = nil
-        let activeSources = sources
-        sources.removeAll(keepingCapacity: true)
-        activeSources.forEach { $0.cancel() }
-        queue.sync {}
-    }
-
-    private func recentSessionLogFiles(codexHome: URL) -> [URL] {
-        let folders = [
-            codexHome.appendingPathComponent("sessions"),
-            codexHome.appendingPathComponent("archived_sessions")
-        ]
-        var files: [(url: URL, modifiedAt: Date)] = []
-
-        for folder in folders {
-            guard let enumerator = FileManager.default.enumerator(
-                at: folder,
-                includingPropertiesForKeys: [.contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                continue
-            }
-
-            for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-                let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                files.append((url, modifiedAt))
-            }
-        }
-
-        return files
-            .sorted { lhs, rhs in
-                if lhs.modifiedAt == rhs.modifiedAt { return lhs.url.path > rhs.url.path }
-                return lhs.modifiedAt > rhs.modifiedAt
-            }
-            .prefix(Self.maxWatchedSessionFiles)
-            .map(\.url)
-    }
-
-    private func watch(_ url: URL) {
-        let descriptor = open(url.path, O_EVTONLY)
-        guard descriptor >= 0 else {
-            return
-        }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.write, .extend, .attrib, .link, .rename, .delete, .revoke],
-            queue: queue
-        )
-        source.setEventHandler { [weak self] in
-            self?.scheduleChange()
-        }
-        source.setCancelHandler {
-            close(descriptor)
-        }
-        source.resume()
-        sources.append(source)
-    }
-
-    private func scheduleChange() {
-        pendingChange?.cancel()
-        let callback = onChange
-        let work = DispatchWorkItem {
-            DispatchQueue.main.async {
-                callback?()
-            }
-        }
-        pendingChange = work
-        queue.asyncAfter(deadline: .now() + 1.0, execute: work)
-    }
-
-    private static let maxWatchedSessionFiles = 64
 }

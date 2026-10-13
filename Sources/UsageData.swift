@@ -469,7 +469,12 @@ final class UsageStore: ObservableObject {
     @Published var latestLimits: RateLimitSnapshot?
     @Published var lastRefreshText: String = "Never"
     @Published var isRefreshing: Bool = false
-    @Published var rates: [ModelRate] = UsageStore.defaultRates
+    @Published var rates: [ModelRate] = UsageStore.defaultRates {
+        didSet {
+            normalizedRates = nil
+            resolvedRates.removeAll(keepingCapacity: true)
+        }
+    }
     @Published var loadMessage: String = "Reading local Codex logs"
     @Published var scanDiagnostics: UsageScanDiagnostics = .empty(codexHomePath: "~/.codex")
 
@@ -483,6 +488,8 @@ final class UsageStore: ObservableObject {
     private var refreshPending = false
     private var lastRefreshStartedAt: Date?
     private var dataSourceRevision: UInt64 = 0
+    private var normalizedRates: [String: ModelRate]?
+    private var resolvedRates: [String: ResolvedRate] = [:]
 
     init(
         codexHome: URL? = nil,
@@ -609,9 +616,15 @@ final class UsageStore: ObservableObject {
         thirtyDayCostPace = makeThirtyDayCostPace(entries: visible, cost: visibleSummary.cost)
         comparison = makeComparison(current: visibleSummary, now: now)
         costRows = makeCostRows(entries: visible, totalCost: visibleSummary.cost)
-        projectRows = makeBreakdown(entries: visible, by: { $0.projectPath }, label: { Self.shortProjectName($0.projectPath) })
-        chatRows = makeBreakdown(entries: visible, by: { $0.sessionID }, label: { $0.chatTitle })
-        modelRows = makeBreakdown(entries: visible, by: { $0.model }, label: { $0.model.isEmpty ? "unknown" : $0.model })
+        if scopeMode == .all || selectedScopeID.isEmpty {
+            projectRows = Array(projectOptionRows.prefix(8))
+            chatRows = Array(chatOptionRows.prefix(8))
+            modelRows = Array(modelOptionRows.prefix(8))
+        } else {
+            projectRows = makeBreakdown(entries: visible, by: { $0.projectPath }, label: { Self.shortProjectName($0.projectPath) })
+            chatRows = makeBreakdown(entries: visible, by: { $0.sessionID }, label: { $0.chatTitle })
+            modelRows = makeBreakdown(entries: visible, by: { $0.model }, label: { $0.model.isEmpty ? "unknown" : $0.model })
+        }
         dailyRows = makeDailyRows(entries: visible, now: now)
         recentRows = makeRecentRows(entries: visible)
         pricingCoverage = makePricingCoverage(entries: visible)
@@ -1015,7 +1028,10 @@ final class UsageStore: ObservableObject {
                 cost: value.cost
             )
         }
-        .sorted { $0.tokens.total > $1.tokens.total }
+        .sorted { (lhs: BreakdownRow, rhs: BreakdownRow) in
+            if lhs.tokens.total == rhs.tokens.total { return lhs.id < rhs.id }
+            return lhs.tokens.total > rhs.tokens.total
+        }
         guard let limit else {
             return rows
         }
@@ -1048,7 +1064,7 @@ final class UsageStore: ObservableObject {
             visibleDayCount = 7
             endDay = calendar.startOfDay(for: now)
         case .thirtyDays:
-            visibleDayCount = 14
+            visibleDayCount = 30
             endDay = calendar.startOfDay(for: now)
         case .lifetime:
             visibleDayCount = 14
@@ -1114,10 +1130,15 @@ final class UsageStore: ObservableObject {
     }
 
     private func makeRecentRows(entries: [UsageEntry]) -> [RecentActivityRow] {
-        entries
-            .sorted { $0.timestamp > $1.timestamp }
-            .prefix(6)
-            .map { entry in
+        var newest: [UsageEntry] = []
+        newest.reserveCapacity(6)
+        for entry in entries {
+            let position = newest.firstIndex { entry.timestamp > $0.timestamp } ?? newest.count
+            guard position < 6 else { continue }
+            newest.insert(entry, at: position)
+            if newest.count > 6 { newest.removeLast() }
+        }
+        return newest.map { entry in
                 RecentActivityRow(
                     id: entry.id,
                     time: Self.activityTimeFormatter.string(from: entry.timestamp),
@@ -1153,15 +1174,28 @@ final class UsageStore: ObservableObject {
     }
 
     private func configuredRateForModel(_ model: String) -> ModelRate? {
+        if let cached = resolvedRates[model] {
+            return cached.value
+        }
+        if normalizedRates == nil {
+            var lookup: [String: ModelRate] = [:]
+            for rate in rates {
+                let key = Self.normalizedModelIdentifier(rate.model)
+                if lookup[key] == nil { lookup[key] = rate }
+            }
+            normalizedRates = lookup
+        }
         let normalized = Self.normalizedModelIdentifier(model)
-        if let exact = rates.first(where: { Self.normalizedModelIdentifier($0.model) == normalized }) {
-            return exact
+        let rate: ModelRate?
+        if let exact = normalizedRates?[normalized] {
+            rate = exact
+        } else if let canonicalModel = Self.canonicalBuiltInModel(for: normalized) {
+            rate = normalizedRates?[canonicalModel]
+        } else {
+            rate = nil
         }
-
-        guard let canonicalModel = Self.canonicalBuiltInModel(for: normalized) else {
-            return nil
-        }
-        return rates.first { Self.normalizedModelIdentifier($0.model) == canonicalModel }
+        resolvedRates[model] = ResolvedRate(value: rate)
+        return rate
     }
 
     private static func normalizedModelIdentifier(_ value: String) -> String {
@@ -1187,11 +1221,7 @@ final class UsageStore: ObservableObject {
 
     private static func canonicalBuiltInModel(for normalizedModel: String) -> String? {
         let leaf = normalizedModel.split(separator: "/").last.map(String.init) ?? normalizedModel
-        let builtInModels = defaultRates
-            .map { normalizedModelIdentifier($0.model) }
-            .sorted { $0.count > $1.count }
-
-        return builtInModels.first { baseModel in
+        return normalizedBuiltInModels.first { baseModel in
             leaf == baseModel || isDateSnapshot(leaf, of: baseModel)
         }
     }
@@ -2789,6 +2819,9 @@ final class UsageStore: ObservableObject {
     private static let modelRatesKey = "modelRates.v1"
     private static let modelRateCatalogVersionKey = "modelRateCatalogVersion.v1"
     private static let defaultRateCatalogVersion = 4
+    private static let normalizedBuiltInModels = defaultRates
+        .map { normalizedModelIdentifier($0.model) }
+        .sorted { $0.count > $1.count }
     nonisolated private static let parseCacheVersion = 5
 
     private static let byteCountFormatter: ByteCountFormatter = {
@@ -2858,6 +2891,10 @@ final class UsageStore: ObservableObject {
 private struct UsageScanSource {
     let codexHome: URL
     let cacheURL: URL?
+}
+
+private struct ResolvedRate {
+    let value: ModelRate?
 }
 
 private struct LocalUsageParseResult {
