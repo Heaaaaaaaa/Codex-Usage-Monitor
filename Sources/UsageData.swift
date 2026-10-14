@@ -476,6 +476,16 @@ final class UsageStore: ObservableObject {
         }
     }
     @Published var loadMessage: String = "Reading local Codex logs"
+    @Published var automaticPricingUpdates = true {
+        didSet {
+            preferences.set(automaticPricingUpdates, forKey: "automaticPricingUpdates.v1")
+            if automaticPricingUpdates { refreshPricingIfNeeded() }
+        }
+    }
+    @Published private(set) var isUpdatingPricing = false
+    @Published private(set) var pricingUpdateMessage = "Bundled rates / " + UsageStore.defaultRateVerifiedDate
+    private var pricingCatalog: PricingCatalog?
+    private var lastPricingAttempt: Date?
     @Published var scanDiagnostics: UsageScanDiagnostics = .empty(codexHomePath: "~/.codex")
 
     var statusChanged: ((String) -> Void)?
@@ -503,7 +513,70 @@ final class UsageStore: ObservableObject {
         self.scopeMode = Self.loadSavedScopeMode(preferences: preferences)
         self.selectedScopeID = preferences.string(forKey: Self.selectedScopeKey) ?? ""
         self.rates = Self.loadSavedRates(preferences: preferences)
+        self._automaticPricingUpdates = Published(initialValue: preferences.object(forKey: "automaticPricingUpdates.v1") as? Bool ?? true)
+        self.lastPricingAttempt = preferences.object(forKey: "pricingLastAttempt.v1") as? Date
+        if let data = preferences.data(forKey: "pricingCatalog.v1"), data.count <= 500_000,
+           let catalog = try? JSONDecoder().decode(PricingCatalog.self, from: data),
+           !catalog.rates.isEmpty, Self.sanitizedRates(catalog.rates) == catalog.rates {
+            self.pricingCatalog = catalog
+            self.pricingUpdateMessage = Self.pricingCheckedMessage(catalog.checkedAt)
+        }
         self.scanDiagnostics = .empty(codexHomePath: self.codexHome.path)
+    }
+
+    var officialRates: [ModelRate] {
+        var result = pricingCatalog?.rates ?? Self.defaultRates
+        let known = Set(result.map { Self.normalizedModelIdentifier($0.model) })
+        result.append(contentsOf: Self.defaultRates.filter { !known.contains(Self.normalizedModelIdentifier($0.model)) })
+        return result
+    }
+
+    func refreshPricingIfNeeded(
+        force: Bool = false,
+        now: Date = Date(),
+        fetch: @escaping () async throws -> PricingCatalog = PricingCatalogClient.fetch
+    ) {
+        guard !isUpdatingPricing, force || automaticPricingUpdates else { return }
+        if !force, let lastPricingAttempt, now.timeIntervalSince(lastPricingAttempt) < 86_400 { return }
+        lastPricingAttempt = now
+        preferences.set(now, forKey: "pricingLastAttempt.v1")
+        isUpdatingPricing = true
+        pricingUpdateMessage = "Checking OpenAI pricing..."
+        Task {
+            do {
+                let catalog = try await fetch()
+                guard force || automaticPricingUpdates else {
+                    isUpdatingPricing = false
+                    pricingUpdateMessage = "Automatic updates off"
+                    return
+                }
+                applyPricingCatalog(catalog)
+            } catch {
+                pricingUpdateMessage = "Check failed / saved rates retained"
+            }
+            isUpdatingPricing = false
+        }
+    }
+
+    func applyPricingCatalog(_ catalog: PricingCatalog) {
+        guard !catalog.rates.isEmpty, Self.sanitizedRates(catalog.rates) == catalog.rates else {
+            pricingUpdateMessage = "Invalid catalog / saved rates retained"
+            return
+        }
+        let previous = officialRates
+        let overrides = Set(preferences.stringArray(forKey: "pricingOverrides.v1") ?? [])
+        rates = PricingCatalog.mergedRates(current: rates, previous: previous, incoming: catalog.rates, overrides: overrides)
+        pricingCatalog = catalog
+        if let data = try? JSONEncoder().encode(catalog) { preferences.set(data, forKey: "pricingCatalog.v1") }
+        saveRates()
+        pricingUpdateMessage = Self.pricingCheckedMessage(catalog.checkedAt)
+    }
+
+    private static func pricingCheckedMessage(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return "Checked " + formatter.string(from: date)
     }
 
     @discardableResult
@@ -663,6 +736,7 @@ final class UsageStore: ObservableObject {
 
     func saveRates() {
         rates = Self.sanitizedRates(rates)
+        recordRateOverrides()
         Self.persistRates(rates, preferences: preferences)
         recompute()
     }
@@ -672,9 +746,16 @@ final class UsageStore: ObservableObject {
         saveRates()
     }
 
+    private func recordRateOverrides() {
+        let official = Dictionary(officialRates.map { (Self.normalizedModelIdentifier($0.model), $0) }, uniquingKeysWith: { first, _ in first })
+        let overrides = rates.filter {
+            official[Self.normalizedModelIdentifier($0.model)] != $0
+        }.map { Self.normalizedModelIdentifier($0.model) }
+        preferences.set(overrides, forKey: "pricingOverrides.v1")
+    }
+
     func resetRates() {
-        rates = Self.defaultRates
-        saveRates()
+        applyRates(officialRates)
     }
 
     func addMissingRateRows() {
@@ -691,7 +772,7 @@ final class UsageStore: ObservableObject {
         let additions = unpricedModelNames
             .compactMap { missingRateRowModel(for: $0) }
             .filter { knownModels.insert(Self.normalizedModelIdentifier($0)).inserted }
-            .map(Self.zeroRate)
+            .map { model in officialRates.first(where: { Self.normalizedModelIdentifier($0.model) == Self.normalizedModelIdentifier(model) }) ?? Self.zeroRate(model) }
         updatedRates.append(contentsOf: additions)
         return updatedRates
     }
@@ -811,6 +892,7 @@ final class UsageStore: ObservableObject {
         }
 
         rates = Self.sanitizedRates(importedRates)
+        recordRateOverrides()
         Self.persistRates(rates, preferences: preferences)
 
         if codexHomeChanged {
@@ -1189,7 +1271,7 @@ final class UsageStore: ObservableObject {
         let rate: ModelRate?
         if let exact = normalizedRates?[normalized] {
             rate = exact
-        } else if let canonicalModel = Self.canonicalBuiltInModel(for: normalized) {
+        } else if let canonicalModel = canonicalConfiguredModel(for: normalized) {
             rate = normalizedRates?[canonicalModel]
         } else {
             rate = nil
@@ -1203,12 +1285,19 @@ final class UsageStore: ObservableObject {
         return normalized.isEmpty ? "unknown" : normalized
     }
 
+    private func canonicalConfiguredModel(for normalized: String) -> String? {
+        let leaf = normalized.split(separator: "/").last.map(String.init) ?? normalized
+        return rates.map { Self.normalizedModelIdentifier($0.model) }.sorted { $0.count > $1.count }.first {
+            leaf == $0 || Self.isDateSnapshot(leaf, of: $0)
+        }
+    }
+
     private func missingRateRowModel(for model: String) -> String? {
         let normalized = Self.normalizedModelIdentifier(model)
         if rates.contains(where: { Self.normalizedModelIdentifier($0.model) == normalized }) {
             return nil
         }
-        guard let canonicalModel = Self.canonicalBuiltInModel(for: normalized) else {
+        guard let canonicalModel = canonicalConfiguredModel(for: normalized) ?? Self.canonicalBuiltInModel(for: normalized) else {
             return model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "unknown" : model
         }
         if rates.contains(where: { Self.normalizedModelIdentifier($0.model) == canonicalModel }) {
@@ -2634,7 +2723,10 @@ final class UsageStore: ObservableObject {
     }
 
     static let defaultRates: [ModelRate] = [
+        ModelRate(model: "gpt-6.1-sol", inputPerMillion: 2.00, cachedInputPerMillion: 0.10, outputPerMillion: 10.00),
         ModelRate(model: "gpt-6-astra", inputPerMillion: 10.00, cachedInputPerMillion: 1.00, outputPerMillion: 50.00),
+        ModelRate(model: "gpt-6-sol", inputPerMillion: 2.00, cachedInputPerMillion: 0.20, outputPerMillion: 10.00),
+        ModelRate(model: "gpt-6-luna", inputPerMillion: 0.10, cachedInputPerMillion: 0.01, outputPerMillion: 0.50),
         ModelRate(model: "gpt-5.6-sol", inputPerMillion: 4.00, cachedInputPerMillion: 0.40, outputPerMillion: 20.00),
         ModelRate(model: "gpt-5.6-terra", inputPerMillion: 2.00, cachedInputPerMillion: 0.20, outputPerMillion: 12.00),
         ModelRate(model: "gpt-5.6-luna", inputPerMillion: 0.20, cachedInputPerMillion: 0.02, outputPerMillion: 1.20),
@@ -2650,8 +2742,8 @@ final class UsageStore: ObservableObject {
     static let defaultRateProfileName = "OpenAI API standard short-context rates"
     static let defaultRateSourceName = "OpenAI API pricing"
     static let defaultRateSourceURL = URL(string: "https://developers.openai.com/api/docs/pricing")!
-    static let defaultRateVerifiedDate = "2026-09-10"
-    static let defaultRateLimitations = "Local logs do not expose cache writes or tool-call charges; total-only rows use the input rate; Astra requests over 272K input tokens and other long-context, processing-mode, regional, and subscription pricing can differ."
+    static let defaultRateVerifiedDate = "2026-10-14"
+    static let defaultRateLimitations = "API-equivalent estimate, not a subscription bill. Local logs do not expose cache writes or tool-call charges; total-only rows use the input rate. Requests over 272K input tokens, processing modes, and regional pricing can differ."
     static let defaultRateSourceSummary = "\(defaultRateProfileName), verified \(defaultRateVerifiedDate)"
     static let defaultRateSourceDetail = "\(defaultRateSourceName) / \(defaultRateVerifiedDate)"
 
@@ -2685,6 +2777,12 @@ final class UsageStore: ObservableObject {
                !migrated.contains(where: { normalizedModelIdentifier($0.model) == "gpt-6-astra" }) {
                 migrated.append(astra)
             }
+            migrated = catalogOrderedRates(migrated)
+        }
+        if savedVersion < 5 {
+            let newModels = Set(["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"])
+            let additions = defaultRates.filter { newModels.contains($0.model) }
+            migrated = PricingCatalog.mergedRates(current: migrated, previous: [], incoming: additions)
             migrated = catalogOrderedRates(migrated)
         }
         return sanitizedRates(migrated)
@@ -2818,7 +2916,7 @@ final class UsageStore: ObservableObject {
     private static let codexHomePathKey = "codexHomePath.v1"
     private static let modelRatesKey = "modelRates.v1"
     private static let modelRateCatalogVersionKey = "modelRateCatalogVersion.v1"
-    private static let defaultRateCatalogVersion = 4
+    private static let defaultRateCatalogVersion = 5
     private static let normalizedBuiltInModels = defaultRates
         .map { normalizedModelIdentifier($0.model) }
         .sorted { $0.count > $1.count }

@@ -142,13 +142,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.5.1")
-    require_equal(version, "0.5.1", "release version")
-    require_equal(build, "13", "release build")
+    version, build, errors = release_version_errors(repo, "v0.5.2")
+    require_equal(version, "0.5.2", "release version")
+    require_equal(build, "14", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.5.1" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.5.2" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)
@@ -213,12 +213,12 @@ def test_publish_workflow_safeguards() -> None:
 def test_pricing_manifest_metadata() -> None:
     repo = Path(__file__).resolve().parent.parent
     pricing = pricing_metadata(repo)
-    require_equal(pricing["verifiedDate"], "2026-09-10", "pricing verification date")
-    require_equal(len(pricing["rates"]), 11, "manifest includes only shipped default rates")
-    require_equal(pricing["rates"][0]["model"], "gpt-6-astra", "manifest includes GPT-6 Astra")
-    require_equal(pricing["rates"][0]["inputPerMillion"], 10.0, "manifest includes Astra input rate")
-    require_equal(pricing["rates"][0]["cachedInputPerMillion"], 1.0, "manifest includes Astra cached rate")
-    require_equal(pricing["rates"][0]["outputPerMillion"], 50.0, "manifest includes Astra output rate")
+    require_equal(pricing["verifiedDate"], "2026-10-14", "pricing verification date")
+    require_equal(len(pricing["rates"]), 14, "manifest includes only shipped default rates")
+    require_equal(pricing["rates"][0]["model"], "gpt-6.1-sol", "manifest includes GPT-6.1 Sol")
+    require_equal(pricing["rates"][0]["inputPerMillion"], 2.0, "manifest includes GPT-6.1 input rate")
+    require_equal(pricing["rates"][0]["cachedInputPerMillion"], 0.1, "manifest includes GPT-6.1 cached rate")
+    require_equal(pricing["rates"][0]["outputPerMillion"], 10.0, "manifest includes GPT-6.1 output rate")
     require("cache writes" in pricing["limitations"], "manifest discloses cache-write limitation")
     pro_rate = next(rate for rate in pricing["rates"] if rate["model"] == "gpt-5.5-pro")
     require_equal(pro_rate["cachedInputPerMillion"], 0.0, "manifest does not invent a Pro cached-input rate")

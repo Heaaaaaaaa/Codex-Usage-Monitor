@@ -1064,15 +1064,15 @@ private func testRateDraftsStayTransactionalUntilApplied() throws {
 @MainActor
 private func testDefaultRateSourceAndReset() throws {
     try require(UsageStore.defaultRateSourceSummary.contains("OpenAI API standard short-context rates"), "default rate source profile")
-    try require(UsageStore.defaultRateSourceSummary.contains("2026-09-10"), "default rate source date")
+    try require(UsageStore.defaultRateSourceSummary.contains("2026-10-14"), "default rate source date")
     try requireEqual(UsageStore.defaultRateSourceURL.absoluteString, "https://developers.openai.com/api/docs/pricing", "default rate source URL")
     try require(UsageStore.defaultRateLimitations.contains("cache writes"), "default rate limitations disclose missing cache writes")
-    try require(UsageStore.defaultRateLimitations.contains("Astra requests over 272K"), "default rate limitations disclose Astra long-context multiplier")
+    try require(UsageStore.defaultRateLimitations.contains("Requests over 272K"), "default rate limitations disclose long-context multiplier")
     try require(UsageStore.defaultRateLimitations.contains("total-only rows use the input rate"), "default rate limitations disclose total-only estimate basis")
-    try requireEqual(UsageStore.defaultRates.first?.model, "gpt-6-astra", "latest default model is first")
-    try requireApprox(UsageStore.defaultRates.first?.inputPerMillion ?? -1, 10.0, "GPT-6 Astra input rate")
-    try requireApprox(UsageStore.defaultRates.first?.cachedInputPerMillion ?? -1, 1.0, "GPT-6 Astra cached rate")
-    try requireApprox(UsageStore.defaultRates.first?.outputPerMillion ?? -1, 50.0, "GPT-6 Astra output rate")
+    try requireEqual(UsageStore.defaultRates.first?.model, "gpt-6.1-sol", "latest default model is first")
+    try requireApprox(UsageStore.defaultRates.first?.inputPerMillion ?? -1, 2.0, "GPT-6.1 input rate")
+    try requireApprox(UsageStore.defaultRates.first?.cachedInputPerMillion ?? -1, 0.1, "GPT-6.1 cached rate")
+    try requireApprox(UsageStore.defaultRates.first?.outputPerMillion ?? -1, 10.0, "GPT-6.1 output rate")
     try requireApprox(UsageStore.defaultRates.first { $0.model == "gpt-5.6-sol" }?.inputPerMillion ?? -1, 4.0, "GPT-5.6 Sol input rate")
     try requireApprox(UsageStore.defaultRates.first { $0.model == "gpt-5.6-terra" }?.outputPerMillion ?? -1, 12.0, "GPT-5.6 Terra output rate")
     try requireApprox(UsageStore.defaultRates.first { $0.model == "gpt-5.6-luna" }?.cachedInputPerMillion ?? -1, 0.02, "GPT-5.6 Luna cached rate")
@@ -1103,9 +1103,9 @@ private func testDefaultRateCatalogMigration() throws {
     preferences.set(try JSONEncoder().encode(legacyRates), forKey: "modelRates.v1")
 
     let migrated = UsageStore(preferences: preferences)
-    try requireEqual(preferences.integer(forKey: "modelRateCatalogVersion.v1"), 4, "rate catalog migration version")
+    try requireEqual(preferences.integer(forKey: "modelRateCatalogVersion.v1"), 5, "rate catalog migration version")
     try requireEqual(migrated.rates.count, UsageStore.defaultRates.count + 1, "migration merges missing defaults once")
-    try requireEqual(migrated.rates.first?.model, "gpt-6-astra", "migration uses current catalog order")
+    try requireEqual(migrated.rates.first?.model, "gpt-6.1-sol", "migration uses current catalog order")
     try requireEqual(migrated.rates.last?.model, "custom-model", "migration keeps custom rows after built-ins")
     try requireApprox(migrated.rates.first { $0.model == "gpt-5.5" }?.inputPerMillion ?? -1, 7.0, "migration preserves edited rows")
     try requireApprox(migrated.rates.first { $0.model == "gpt-5.5-pro" }?.cachedInputPerMillion ?? -1, 0, "migration corrects untouched legacy Pro row")
@@ -1132,8 +1132,8 @@ private func testDefaultRateCatalogMigration() throws {
     versionTwoPreferences.set(try JSONEncoder().encode(versionTwoRates), forKey: "modelRates.v1")
     versionTwoPreferences.set(2, forKey: "modelRateCatalogVersion.v1")
     let reordered = UsageStore(preferences: versionTwoPreferences)
-    try requireEqual(versionTwoPreferences.integer(forKey: "modelRateCatalogVersion.v1"), 4, "version two rates advance to version four")
-    try requireEqual(reordered.rates.first?.model, "gpt-6-astra", "version four reorders built-in rows")
+    try requireEqual(versionTwoPreferences.integer(forKey: "modelRateCatalogVersion.v1"), 5, "version two rates advance to current catalog")
+    try requireEqual(reordered.rates.first?.model, "gpt-6.1-sol", "current catalog reorders built-in rows")
     try requireEqual(reordered.rates.last?.model, "custom-first", "version four preserves custom row ordering")
     try require(!reordered.rates.contains { $0.model == "gpt-5.6-luna" }, "version four does not resurrect removed rows")
 
@@ -1147,7 +1147,7 @@ private func testDefaultRateCatalogMigration() throws {
     versionThreePreferences.set(try JSONEncoder().encode(versionThreeRates), forKey: "modelRates.v1")
     versionThreePreferences.set(3, forKey: "modelRateCatalogVersion.v1")
     let repriced = UsageStore(preferences: versionThreePreferences)
-    try requireEqual(repriced.rates.first?.model, "gpt-6-astra", "version four inserts Astra first")
+    try requireEqual(repriced.rates.first?.model, "gpt-6.1-sol", "migration inserts latest model first")
     try requireApprox(repriced.rates.first { $0.model == "gpt-5.6-sol" }?.inputPerMillion ?? -1, 9.0, "version four preserves edited Sol rate")
     try requireApprox(repriced.rates.first { $0.model == "gpt-5.6-terra" }?.inputPerMillion ?? -1, 2.0, "version four refreshes untouched Terra rate")
     try requireApprox(repriced.rates.first { $0.model == "gpt-5.6-luna" }?.outputPerMillion ?? -1, 1.2, "version four refreshes untouched Luna rate")
@@ -2394,11 +2394,126 @@ private func testPrivacyManifestDeclaresRequiredReasonAPIs() throws {
     try require(reasons.contains("CA92.1"), "privacy manifest UserDefaults reason")
 }
 
+private let pricingDocumentFixture = """
+# Pricing
+Prices per 1M tokens.
+### Standard pricing data
+
+| Model | Short context input | Short context cached input | Short context cache writes | Short context output | Long context input | Long context cached input | Long context cache writes | Long context output |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gpt-6.1-sol | $2.00 | $0.10 | $2.50 | $10.00 | $4.00 | $0.20 | $5.00 | $15.00 |
+| gpt-5.5-pro (<272K context length) | $30.00 | - | - | $180.00 | $60.00 | - | - | $270.00 |
+
+### Batch pricing data
+| gpt-6.1-sol | $1.00 | $0.05 | $1.25 | $5.00 | $2.00 | $0.10 | $2.50 | $7.50 |
+"""
+
+private func testPricingDocumentParser() throws {
+    let catalog = try PricingCatalog.parse(pricingDocumentFixture)
+    try requireEqual(catalog.rates.count, 2, "only standard rows parsed")
+    try requireApprox(catalog.rates[0].inputPerMillion, 2, "standard not batch or long-context input")
+    try requireApprox(catalog.rates[0].cachedInputPerMillion, 0.1, "cached not cache-write rate")
+    try requireApprox(catalog.rates[0].outputPerMillion, 10, "correct output column")
+    try requireEqual(catalog.rates[1].model, "gpt-5.5-pro", "document context qualifier normalized")
+    try requireApprox(catalog.rates[1].cachedInputPerMillion, 0, "unavailable cached rate not guessed")
+    for invalid in [
+        "<html>Not a pricing document</html>",
+        pricingDocumentFixture.replacingOccurrences(of: "### Standard pricing data", with: "### Fast pricing data"),
+        pricingDocumentFixture.replacingOccurrences(of: "Short context output", with: "Output / minute"),
+        pricingDocumentFixture.replacingOccurrences(of: "$2.00", with: "$-2.00"),
+        pricingDocumentFixture.replacingOccurrences(of: "$0.10", with: "$nan"),
+        pricingDocumentFixture.replacingOccurrences(of: "$10.00", with: "$10 / 1K tokens"),
+        pricingDocumentFixture.replacingOccurrences(of: "gpt-5.5-pro (<272K context length)", with: "gpt-6.1-sol")
+    ] {
+        try require((try? PricingCatalog.parse(invalid)) == nil, "malformed or different-unit catalog rejected")
+    }
+}
+
+@MainActor
+private func testAutomaticPricingMerge() throws {
+    let preferences = isolatedPreferences()
+    let store = UsageStore(preferences: preferences)
+    let newRate = ModelRate(model: "gpt-test-new", inputPerMillion: 3, cachedInputPerMillion: 0.3, outputPerMillion: 15)
+    var draft = store.rates.filter { $0.model != "gpt-6-luna" }
+    let solIndex = draft.firstIndex { $0.model == "gpt-6.1-sol" }!
+    draft[solIndex].inputPerMillion = 99
+    store.applyRates(draft)
+    let updatedAstra = ModelRate(model: "gpt-6-astra", inputPerMillion: 9, cachedInputPerMillion: 0.9, outputPerMillion: 45)
+    let catalog = PricingCatalog(rates: UsageStore.defaultRates.filter { $0.model != "gpt-6-astra" } + [updatedAstra, newRate], checkedAt: Date())
+    store.applyPricingCatalog(catalog)
+    try requireApprox(store.rates.first { $0.model == "gpt-6.1-sol" }!.inputPerMillion, 99, "manual override retained")
+    try requireApprox(store.rates.first { $0.model == "gpt-6-astra" }!.inputPerMillion, 9, "untouched official row updated")
+    try require(!store.rates.contains { $0.model == "gpt-6-luna" }, "deleted row remains deleted")
+    try requireEqual(store.rates.last, newRate, "new models added automatically")
+    let reloaded = UsageStore(preferences: preferences)
+    try requireEqual(reloaded.rates, store.rates, "downloaded rates persist")
+    try requireEqual(reloaded.officialRates, store.officialRates, "downloaded catalog persists")
+    reloaded.entries = [makeEntry(id: "new-price", daysAgo: 0, sessionID: "test", chatTitle: "Test", projectPath: "/tmp/test", model: "openai/gpt-test-new-2026-10-14", tokens: UsageTokens(input: 1_000_000, cachedInput: 0, output: 0, reasoningOutput: 0, total: 1_000_000))]
+    reloaded.recompute()
+    try requireApprox(reloaded.summary.cost, 3, "downloaded model dated aliases priced")
+    var zeroDraft = reloaded.rates
+    let newIndex = zeroDraft.firstIndex { $0.model == newRate.model }!
+    zeroDraft[newIndex] = ModelRate(model: newRate.model, inputPerMillion: 0, cachedInputPerMillion: 0, outputPerMillion: 0)
+    reloaded.applyRates(zeroDraft)
+    reloaded.applyPricingCatalog(catalog)
+    try requireApprox(reloaded.summary.cost, 0, "explicit manual zero override retained")
+}
+
+@MainActor
+private func testPricingRefreshScheduling() throws {
+    let preferences = isolatedPreferences()
+    let store = UsageStore(preferences: preferences)
+    let catalog = try PricingCatalog.parse(pricingDocumentFixture)
+    try require(!store.isUpdatingPricing, "initialization never launches a network check")
+    let now = Date()
+    var requests = 0
+    store.refreshPricingIfNeeded(now: now) { requests += 1; return catalog }
+    store.refreshPricingIfNeeded(now: now) { requests += 1; return catalog }
+    try require(waitUntil(timeout: 5) { !store.isUpdatingPricing }, "pricing refresh completes")
+    try requireEqual(requests, 1, "in-flight requests coalesced")
+    store.refreshPricingIfNeeded(now: now.addingTimeInterval(86_399)) { requests += 1; return catalog }
+    try requireEqual(requests, 1, "automatic check throttled for one day")
+    let oldRates = store.rates
+    store.refreshPricingIfNeeded(now: now.addingTimeInterval(86_400)) { requests += 1; throw PricingCatalogError.invalidResponse }
+    try require(waitUntil(timeout: 5) { !store.isUpdatingPricing }, "failed pricing request completes")
+    try requireEqual(requests, 2, "automatic daily retry")
+    try requireEqual(store.rates, oldRates, "offline retains previous rates")
+    try require(store.pricingUpdateMessage.contains("saved rates retained"), "failure status visible")
+    store.automaticPricingUpdates = false
+    store.refreshPricingIfNeeded(now: now.addingTimeInterval(172_800)) { requests += 1; return catalog }
+    try requireEqual(requests, 2, "disabled automatic fetch skipped")
+    store.refreshPricingIfNeeded(force: true) { requests += 1; return catalog }
+    try require(waitUntil(timeout: 5) { !store.isUpdatingPricing }, "manual check completes")
+    try requireEqual(requests, 3, "manual check works while automatic updates off")
+    let reloaded = UsageStore(preferences: preferences)
+    try require(!reloaded.automaticPricingUpdates, "automatic pricing preference persists")
+    reloaded.refreshPricingIfNeeded { requests += 1; return catalog }
+    try requireEqual(requests, 3, "initializing store never initiates network")
+}
+
+@MainActor
+private func testGPT61MigrationAndEstimate() throws {
+    let preferences = isolatedPreferences()
+    var oldRates = UsageStore.defaultRates.filter { !["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"].contains($0.model) }
+    oldRates.append(ModelRate(model: "gpt-6.1-sol", inputPerMillion: 0, cachedInputPerMillion: 0, outputPerMillion: 0))
+    preferences.set(try JSONEncoder().encode(oldRates), forKey: "modelRates.v1")
+    preferences.set(4, forKey: "modelRateCatalogVersion.v1")
+    let store = UsageStore(preferences: preferences)
+    store.entries = [makeEntry(id: "sol61", daysAgo: 0, sessionID: "test", chatTitle: "Test", projectPath: "/tmp/test", model: "gpt-6.1-sol", tokens: UsageTokens(input: 2_000_000, cachedInput: 1_000_000, output: 1_000_000, reasoningOutput: 500_000, total: 3_000_000))]
+    store.recompute()
+    try requireApprox(store.summary.cost, 12.1, "GPT-6.1 caches and reasoning priced without double counting")
+    try requireEqual(store.pricingCoverage.percentText, "100%", "GPT-6.1 priced completely")
+}
+
 @main
 private struct RunTests {
     @MainActor
     static func main() {
         let tests: [(String, @MainActor () throws -> Void)] = [
+            ("official pricing document parser", testPricingDocumentParser),
+            ("automatic pricing merge and persistence", testAutomaticPricingMerge),
+            ("pricing refresh scheduling and offline fallback", testPricingRefreshScheduling),
+            ("GPT-6.1 migration and estimate", testGPT61MigrationAndEstimate),
             ("seven-day summary and cost", testSevenDaySummaryAndCost),
             ("today window", testTodayWindowFiltersCurrentCalendarDay),
             ("calendar window boundaries", testCalendarWindowBoundaries),

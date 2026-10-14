@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 2026-07-11
+Last updated: 2026-10-14
 
 Codex Usage Monitor is a local macOS utility. It does not operate a server, collect analytics, create advertising identifiers, or transmit Codex usage data.
 
@@ -16,7 +16,7 @@ These files can contain token counts, model names, project paths, chat titles, t
 
 ## Data Stored on the Mac
 
-App preferences are stored with macOS `UserDefaults`. They can include filters, budgets, display choices, the selected log-folder path, and editable model rates.
+App preferences are stored with macOS `UserDefaults`. They can include filters, budgets, display choices, the selected log-folder path, editable model rates, the public pricing catalog, pricing-check timestamps, and the automatic-pricing preference.
 
 Parsed usage data is cached under `~/Library/Caches/CodexUsageMonitor` to make later scans faster. The cache stays on the Mac. Use **Settings > Diagnostics > Clear Caches** to remove all app-owned parsed-log caches.
 
@@ -28,7 +28,9 @@ CSV export writes the currently filtered usage events to a location you choose. 
 
 ## Network Activity
 
-The app does not make network requests. Choosing **Open Pricing Source** asks macOS to open the public OpenAI pricing page in your default browser; no local usage data is added to that URL.
+Automatic pricing updates are enabled by default and can be disabled in **Settings > Rates**. While running, the app checks the public `https://developers.openai.com/api/docs/pricing.md` document at most once every 24 hours, starting on launch. **Check official pricing now** can also request a check. The request contains no Codex logs, model-use history, project paths, chat titles, account credentials, or API key. OpenAI receives ordinary connection metadata such as your IP address. The app uses an ephemeral HTTP session without stored cookies or credentials and does not follow redirects.
+
+The downloaded Standard short-context catalog is stored locally. Failed or incompatible responses leave saved rates unchanged, so usage tracking continues offline. Choosing **Open Pricing Source** opens the public OpenAI pricing page in your default browser without adding local usage data to the URL.
 
 ## Data Sharing and Tracking
 

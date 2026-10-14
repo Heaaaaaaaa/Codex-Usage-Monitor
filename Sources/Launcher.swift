@@ -13,6 +13,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
     private let logWatcher = CodexLogWatcher()
     private let budgetNotifier = BudgetNotificationController()
     private var refreshTimer: Timer?
+    private var pricingTimer: Timer?
     private var wantsPopoverVisible = false
     private var cancellables: Set<AnyCancellable> = []
 
@@ -73,12 +74,17 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
             .store(in: &cancellables)
 
         store.refresh()
+        store.refreshPricingIfNeeded()
+        pricingTimer = Timer.scheduledTimer(withTimeInterval: 3_600, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in self?.store.refreshPricingIfNeeded() }
+        }
         scheduleRefreshTimer()
         restartLogWatcher()
     }
 
     deinit {
         refreshTimer?.invalidate()
+        pricingTimer?.invalidate()
     }
 
     func show() {

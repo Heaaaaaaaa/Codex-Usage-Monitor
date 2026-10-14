@@ -1,7 +1,7 @@
 APP_NAME ?= CodexUsageMonitor
 BUNDLE_IDENTIFIER ?= local.codex.usagemonitor
-VERSION ?= 0.5.1
-BUILD_NUMBER ?= 13
+VERSION ?= 0.5.2
+BUILD_NUMBER ?= 14
 MINIMUM_MACOS := 13.0
 ROOT := $(abspath ../..)
 DEFAULT_OUT_DIR := $(ROOT)/outputs
@@ -46,8 +46,8 @@ SOURCES := $(wildcard Sources/*.swift)
 BUNDLE_RESOURCES := $(APP_ICON) $(MENU_BAR_ICON) Resources/PrivacyInfo.xcprivacy
 PRIVACY_MANIFEST := Resources/PrivacyInfo.xcprivacy
 ENTITLEMENTS := Resources/Release.entitlements
-DATA_SOURCES := Sources/UsageData.swift
-TEST_DATA_SOURCES := Sources/UsageData.swift Sources/AppSettings.swift Sources/CodexLogWatcher.swift
+DATA_SOURCES := Sources/UsageData.swift Sources/PricingCatalog.swift
+TEST_DATA_SOURCES := $(DATA_SOURCES) Sources/AppSettings.swift Sources/CodexLogWatcher.swift
 DIAGNOSTIC := $(BUILD_DIR)/DumpSummary
 DIAGNOSTIC_CACHE := $(BUILD_DIR)/diagnostic-usage-cache.json
 TEST_RUNNER := $(BUILD_DIR)/RunTests
@@ -106,6 +106,13 @@ run: all
 	open "$(APP)"
 
 .PHONY: benchmark
+verify-pricing-source: $(BUILD_DIR)/VerifyPricingSource
+	"$(BUILD_DIR)/VerifyPricingSource"
+
+$(BUILD_DIR)/VerifyPricingSource: $(DATA_SOURCES) Tools/VerifyPricingSource.swift
+	mkdir -p "$(BUILD_DIR)/ModuleCache-pricing"
+	xcrun swiftc -O -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-pricing" $(DATA_SOURCES) Tools/VerifyPricingSource.swift -o "$@" -framework SwiftUI -framework Combine
+
 benchmark: $(BUILD_DIR)/BenchmarkSummary
 	"$(BUILD_DIR)/BenchmarkSummary" 30000
 

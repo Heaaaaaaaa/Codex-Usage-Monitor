@@ -1009,7 +1009,7 @@ struct RootView: View {
                             .foregroundStyle(AppColor.primaryText)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
-                        Text(UsageStore.defaultRateSourceDetail)
+                        Text(store.pricingUpdateMessage)
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(AppColor.tertiaryText)
                             .lineLimit(1)
@@ -1029,7 +1029,7 @@ struct RootView: View {
                     .accessibilityLabel("Open pricing source")
 
                     Button {
-                        rateDraft = UsageStore.defaultRates
+                        rateDraft = store.officialRates
                     } label: {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 11, weight: .bold))
@@ -1042,6 +1042,24 @@ struct RootView: View {
                 .padding(12)
                 .background(AppColor.row)
                 .clipShape(RoundedRectangle(cornerRadius: AppStyle.smallRadius, style: .continuous))
+
+                HStack {
+                    Toggle("Automatic pricing updates", isOn: $store.automaticPricingUpdates)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Button {
+                        store.refreshPricingIfNeeded(force: true)
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(store.isUpdatingPricing)
+                    .help("Check official pricing now")
+                    .accessibilityLabel("Check official pricing now")
+                }
 
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "info.circle")

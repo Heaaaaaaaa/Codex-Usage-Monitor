@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2 - 2026-10-14
+
+- Add verified GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna Standard API rates and migrate existing missing or zero-placeholder rows.
+- Automatically check OpenAI's public pricing document daily while running, with an on/off setting, manual check, and visible status in Rates.
+- Preserve custom pricing and deleted rows, cache downloaded catalogs locally, and retain saved rates offline or when the official document format is incompatible.
+- Support provider-qualified and dated identifiers for newly discovered models, and recalculate local estimates when prices change.
+- Document the optional public pricing request and connection metadata; no usage data, credentials, or API key are sent.
+
 ## 0.5.1 - 2026-10-13
 
 - Cached model-rate resolution, reused unfiltered breakdowns, and selected only the newest six activity events without sorting the entire history.
