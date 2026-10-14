@@ -1,6 +1,23 @@
 # Publishing Checklist
 
-This app can be distributed as a local ad-hoc build for personal use, or as a Developer ID signed and notarized macOS app for public distribution.
+Community releases can be published as ad-hoc signed builds without Apple signing credentials, provided the download page clearly discloses that they are not notarized and macOS may block the first launch. Developer ID signing and notarization are a separate distribution option.
+
+## Development
+
+Build and run with a Swift toolchain and macOS SDK:
+
+```bash
+make all OUT_DIR=build/output
+open build/output/CodexUsageMonitor.app
+make test verify-concurrency
+make benchmark
+```
+
+`make test` uses synthetic logs and pricing responses without network access. `make verify-concurrency` treats complete Swift concurrency warnings as errors. `make benchmark` measures summary recomputation over 30,000 synthetic events without reading personal logs. `make verify-pricing-source` is a separate, optional network check against OpenAI's official public pricing document.
+
+Use `make demo-data` to generate `build/demo-codex-home`, then choose it in Settings and select the 7-day filter. Override the folder with `DEMO_OUT=/path/to/folder`. Regeneration only replaces directories marked by the fixture generator. See [the screenshot workflow](Docs/Screenshots/README.md) for cursor-free native renders.
+
+Build output can be overridden with `OUT_DIR=/path/to/output`. Without an override, the Makefile uses `../../outputs` when that folder exists, otherwise the parent folder.
 
 ## Local Release
 
@@ -63,9 +80,9 @@ make source-archive
 
 This creates `CodexUsageMonitor-0.5.2-source.zip` and its SHA-256 file from tracked `HEAD` only. Apply that snapshot to a clean clone of the public repository, preserve its existing `.git` directory and `LICENSE`, and commit with the configured GitHub no-reply identity. Run `make audit-public-history` in the public clone and require it to pass before every push. The source validator rejects tracked credentials, private keys, raw JSONL/log files, generated build directories, current-user absolute home paths, unsafe ZIP paths, and symbolic links.
 
-## Public Release
+## Signed and Notarized Release
 
-Public distribution outside your own Mac needs:
+Developer ID signing and notarization require:
 
 - Apple Developer Program membership.
 - A Developer ID Application certificate installed in Keychain.
