@@ -1,12 +1,12 @@
 # Privacy Policy
 
-Last updated: 2026-10-14
+Last updated: 2026-10-19
 
 Codex Usage Monitor is a local macOS utility. It does not operate a server, collect analytics, create advertising identifiers, or transmit Codex usage data.
 
 ## Data the App Reads
 
-The app reads JSONL files inside the Codex log folder you select. The default folder is `~/.codex`. The supported sources are:
+The app reads plain JSONL and Zstandard-compressed `.jsonl.zst` files inside the Codex log folder you select. Compressed logs are decoded in memory with a bundled decoder; originals are never modified and no extracted log copies are written to disk. The default folder is `~/.codex`. The supported sources are:
 
 - `sessions`
 - `archived_sessions`

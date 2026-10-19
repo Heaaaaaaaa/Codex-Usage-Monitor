@@ -132,8 +132,9 @@ def check_executable(app: Path, app_name: str) -> bool:
 
 def check_universal_binary(app: Path, app_name: str) -> bool:
     executable = app / "Contents" / "MacOS" / app_name
-    code, output = command_output(["xcrun", "lipo", str(executable), "-verify_arch", "arm64", "x86_64"])
-    return result(code == 0, "universal app binary", "arm64 + x86_64" if code == 0 else output)
+    code, output = command_output(["xcrun", "lipo", "-archs", str(executable)])
+    ok = code == 0 and {"arm64", "x86_64"}.issubset(output.split())
+    return result(ok, "universal app binary", "arm64 + x86_64" if ok else output)
 
 
 def check_privacy_manifest(app: Path) -> bool:

@@ -14,7 +14,7 @@ A native macOS menu-bar app for tracking local Codex tokens and estimated API co
 
 Requires **macOS 13 or later**, on Apple silicon or Intel.
 
-1. Download [CodexUsageMonitor-0.5.2.dmg](https://github.com/Heaaaaaaaa/Codex-Usage-Monitor/releases/download/v0.5.2/CodexUsageMonitor-0.5.2.dmg).
+1. Download [CodexUsageMonitor-0.5.3.dmg](https://github.com/Heaaaaaaaa/Codex-Usage-Monitor/releases/download/v0.5.3/CodexUsageMonitor-0.5.3.dmg).
 2. Open the DMG and drag the app into **Applications**.
 3. Launch it, then click its menu-bar icon. Logs are read from `~/.codex` by default; change the folder in Settings if needed.
 
@@ -36,7 +36,7 @@ Costs use [OpenAI's Standard short-context API rates](https://developers.openai.
 
 Automatic pricing checks are enabled by default and run at most daily while the app is open. They preserve custom rates and deleted rows, keep saved prices offline, and can be disabled in **Settings > Rates**. Estimates use the current catalog, not historical invoice prices.
 
-Usage is calculated from local Codex logs. The app does not read authentication files, upload usage data, or collect analytics. Pricing checks fetch only OpenAI's public table; no API key is required. See the [Privacy Policy](PRIVACY.md) for network and local-storage details.
+Usage is calculated from plain `.jsonl` and compressed `.jsonl.zst` Codex logs. Lifetime covers the available local history, with its date range shown below the token total. The app does not read authentication files, upload usage data, or collect analytics. Pricing checks fetch only OpenAI's public table; no API key is required. See the [Privacy Policy](PRIVACY.md) for network and local-storage details.
 
 ## Build from Source
 

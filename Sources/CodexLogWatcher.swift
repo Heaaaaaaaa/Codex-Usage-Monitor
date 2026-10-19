@@ -141,7 +141,7 @@ enum SessionLogDiscovery {
                 includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
                 options: [.skipsHiddenFiles]
             ) else { continue }
-            for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            for case let url as URL in enumerator where url.pathExtension == "jsonl" || url.lastPathComponent.hasSuffix(".jsonl.zst") {
                 guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                       values.isRegularFile == true else { continue }
                 let candidate = (url: url, modifiedAt: values.contentModificationDate ?? .distantPast)

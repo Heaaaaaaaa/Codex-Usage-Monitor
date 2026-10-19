@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.3 - 2026-10-19
+
+- Read historical `.jsonl.zst` rollouts using a bundled Zstandard decoder on Apple silicon and Intel, without Homebrew or extracting logs to disk.
+- Rescan with a new cache format so previously skipped compressed history is included. Prefer plain active copies when both formats are present and prevent duplicate totals.
+- Use canonical thread IDs instead of shared runtime session IDs, fixing merged chats and chat filters.
+- Include the full available history in the Lifetime chart, with monthly buckets for multi-year ranges, and show the local-history date range below the token total.
+- Accept whitespace in JSON records and report corrupt or truncated compressed streams in diagnostics.
+- Do not count repeated status snapshots whose cumulative usage has not changed, while preserving real counter resets and per-request records.
+- Include explicitly identified compaction requests from newer usage records, without also counting their mirrored token snapshots or repeated response IDs.
+- Add compressed-file, duplicate-format, decoder, shared-runtime, and complete-history regression tests.
+
 ## 0.5.2 - 2026-10-14
 
 - Add verified GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna Standard API rates and migrate existing missing or zero-placeholder rows.

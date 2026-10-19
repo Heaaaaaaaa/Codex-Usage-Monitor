@@ -57,6 +57,7 @@ struct UsageEntry: Codable, Identifiable, Hashable {
     let model: String
     let tokens: UsageTokens
     let sourceFile: String
+    var responseID: String? = nil
 }
 
 private struct UsageEventSignature: Hashable {
@@ -1126,9 +1127,13 @@ final class UsageStore: ObservableObject {
         }
 
         let calendar = Calendar.current
+        let earliest = entries.map(\.timestamp).min() ?? now
+        let latest = entries.map(\.timestamp).max() ?? now
+        let monthly = dateWindow == .lifetime && (calendar.dateComponents([.day], from: earliest, to: latest).day ?? 0) > 366
+        let component: Calendar.Component = monthly ? .month : .day
         var grouped: [Date: (tokens: UsageTokens, cost: Double)] = [:]
         for entry in entries {
-            let day = calendar.startOfDay(for: entry.timestamp)
+            let day = monthly ? (calendar.dateInterval(of: .month, for: entry.timestamp)?.start ?? calendar.startOfDay(for: entry.timestamp)) : calendar.startOfDay(for: entry.timestamp)
             let existing = grouped[day] ?? (.zero, 0)
             grouped[day] = (
                 tokens: existing.tokens + entry.tokens,
@@ -1149,26 +1154,36 @@ final class UsageStore: ObservableObject {
             visibleDayCount = 30
             endDay = calendar.startOfDay(for: now)
         case .lifetime:
-            visibleDayCount = 14
             endDay = grouped.keys.max() ?? calendar.startOfDay(for: now)
+            visibleDayCount = max((calendar.dateComponents([component], from: grouped.keys.min() ?? endDay, to: endDay).value(for: component) ?? 0) + 1, 1)
         }
 
-        guard let startDay = calendar.date(byAdding: .day, value: -(visibleDayCount - 1), to: endDay) else {
+        guard let startDay = calendar.date(byAdding: component, value: -(visibleDayCount - 1), to: endDay) else {
             return []
         }
 
+        let historyLabel = DateFormatter()
+        historyLabel.dateFormat = monthly ? "MMM yyyy" : "MMM d, yy"
         return (0..<visibleDayCount).compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: startDay) else {
+            guard let day = calendar.date(byAdding: component, value: offset, to: startDay) else {
                 return nil
             }
             let value = grouped[day] ?? (.zero, 0)
             return DailyUsageRow(
                 id: Self.dayIDFormatter.string(from: day),
-                label: Self.shortDayFormatter.string(from: day),
+                label: dateWindow == .lifetime ? historyLabel.string(from: day) : Self.shortDayFormatter.string(from: day),
                 tokens: value.tokens,
                 cost: value.cost
             )
         }
+    }
+
+    var historyCaption: String {
+        guard dateWindow == .lifetime else { return dateWindow.title }
+        guard let first = entries.map(\.timestamp).min(), let last = entries.map(\.timestamp).max() else { return "Available local logs" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return "Local: \(formatter.string(from: first)) - \(formatter.string(from: last))"
     }
 
     private func makeThirtyDayCostPace(entries: [UsageEntry], cost: Double) -> Double {
@@ -1556,6 +1571,7 @@ final class UsageStore: ObservableObject {
         var allEntries: [UsageEntry] = []
         var limitCandidates: [RateLimitSnapshot] = []
         var seenEntrySignatures = Set<UsageEventSignature>()
+        var seenResponseIDs = Set<String>()
         var parseIssueCount = 0
         var latestParseIssue: String?
 
@@ -1572,6 +1588,7 @@ final class UsageStore: ObservableObject {
                 cachedFileCount: &cachedFileCount
             )
             for entry in parsed.entries where cutoff.map({ entry.timestamp >= $0 }) ?? true {
+                if let responseID = entry.responseID, !seenResponseIDs.insert(responseID).inserted { continue }
                 guard seenEntrySignatures.insert(UsageEventSignature(entry: entry)).inserted else {
                     continue
                 }
@@ -1717,7 +1734,8 @@ final class UsageStore: ObservableObject {
                     projectPath: entry.projectPath,
                     model: entry.model,
                     tokens: entry.tokens,
-                    sourceFile: entry.sourceFile
+                    sourceFile: entry.sourceFile,
+                    responseID: entry.responseID
                 )
             }
             return updatedFile
@@ -1877,12 +1895,18 @@ final class UsageStore: ObservableObject {
             guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: resourceKeys) else {
                 continue
             }
-            for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            let candidates = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "jsonl" || $0.lastPathComponent.hasSuffix(".jsonl.zst") }
+                .sorted { lhs, rhs in
+                    if (lhs.pathExtension == "jsonl") != (rhs.pathExtension == "jsonl") { return lhs.pathExtension == "jsonl" }
+                    return lhs.path < rhs.path
+                }
+            for url in candidates {
                 let resolvedFilePath = url.resolvingSymlinksInPath().standardizedFileURL.path
                 guard resolvedFilePath.hasPrefix(resolvedFolderPath) else {
                     continue
                 }
-                let relativePath = String(resolvedFilePath.dropFirst(resolvedFolderPath.count))
+                let rawRelativePath = String(resolvedFilePath.dropFirst(resolvedFolderPath.count))
+                let relativePath = rawRelativePath.hasSuffix(".jsonl.zst") ? String(rawRelativePath.dropLast(4)) : rawRelativePath
                 guard seenRelativePaths.insert(relativePath).inserted else {
                     continue
                 }
@@ -1935,6 +1959,10 @@ final class UsageStore: ObservableObject {
         var latestParseIssue: String?
         let replaySecond = replaySecond(in: url)
         var skippingReplay = replaySecond != nil
+        var pendingRequests: [String: UsageEntry] = [:]
+        var compactedResponses = Set<String>()
+        var countedResponses = Set<String>()
+        var latestRequest: (id: String, usage: UsageTokens, cumulative: UsageTokens?)?
 
         func recordParseIssue(_ message: String, lineNumber: Int? = nil) {
             parseIssueCount += 1
@@ -1946,31 +1974,65 @@ final class UsageStore: ObservableObject {
         }
 
         let lineDiagnostics = forEachLine(in: url) { line, lineNumber in
-            if line.contains("\"type\":\"session_meta\"") {
-                if let id = extractStringField("session_id", from: line) ?? extractStringField("id", from: line) {
+            if line.contains("\"session_meta\""), let object = jsonObject(line), object["type"] as? String == "session_meta" {
+                let meta = object["payload"] as? [String: Any] ?? object
+                if let id = (meta["id"] as? String) ?? (meta["thread_id"] as? String) ?? (meta["session_id"] as? String), !id.isEmpty {
                     sessionID = id
                     chatTitle = index[id] ?? chatTitle
                 }
-                if let cwd = extractStringField("cwd", from: line) {
+                if let cwd = meta["cwd"] as? String {
                     currentProject = cwd
                 }
-                if let model = extractStringField("model", from: line) {
+                if let model = meta["model"] as? String {
                     currentModel = model
                 }
                 return true
             }
 
-            if line.contains("\"type\":\"turn_context\"") {
-                if let cwd = extractStringField("cwd", from: line) {
+            if line.contains("\"turn_context\""), let object = jsonObject(line), object["type"] as? String == "turn_context" {
+                let context = object["payload"] as? [String: Any] ?? object
+                if let cwd = context["cwd"] as? String {
                     currentProject = cwd
                 }
-                if let model = extractStringField("model", from: line) {
+                if let model = context["model"] as? String {
                     currentModel = model
                 }
                 return true
             }
 
-            guard line.contains("\"type\":\"token_count\"") else {
+            if line.contains("\"token_usage_record\"") || line.contains("\"compacted\"") {
+                if let object = jsonObject(line), let payload = object["payload"] as? [String: Any] {
+                    if object["type"] as? String == "compacted", let response = payload["compaction_response_id"] as? String, !response.isEmpty {
+                        compactedResponses.insert(response)
+                        if let entry = pendingRequests.removeValue(forKey: response), countedResponses.insert(response).inserted {
+                            entries.append(entry)
+                        }
+                        return true
+                    }
+                    if object["type"] as? String == "token_usage_record" {
+                        guard let response = payload["response_id"] as? String, !response.trimmingCharacters(in: .whitespaces).isEmpty,
+                              let usageObject = payload["usage"] as? [String: Any],
+                              let timestamp = parseDate(object["timestamp"] as? String) else { return true }
+                        let usage = tokens(from: usageObject)
+                        guard usage.hasTokenBreakdown else { return true }
+                        latestRequest = (response, usage, (payload["thread_token_usage"] as? [String: Any]).map(tokens(from:)))
+                        guard !countedResponses.contains(response) else { return true }
+                        var entry = makeEntry(timestamp: timestamp, sessionID: sessionID, chatTitle: chatTitle, project: currentProject,
+                                              model: resolvedModel(payload["model"] as? String ?? currentModel, at: timestamp), tokens: usage, file: url, line: lineNumber)
+                        entry.responseID = response
+                        // Most records mirror token_count. Only an explicit compaction
+                        // marker can make an otherwise unmatched request additional usage.
+                        if compactedResponses.contains(response) {
+                            if countedResponses.insert(response).inserted { entries.append(entry) }
+                        } else if pendingRequests[response] == nil {
+                            pendingRequests[response] = entry
+                        }
+                        return true
+                    }
+                }
+            }
+
+            guard line.contains("\"token_count\"") else {
                 return true
             }
 
@@ -2023,6 +2085,9 @@ final class UsageStore: ObservableObject {
             }
             let resolvedModel = resolvedModel(eventModel, at: timestamp)
 
+            // Allowance/status updates can repeat the last request with an unchanged
+            // cumulative counter. They are not new inference usage.
+            if let totalUsage, totalUsage == previousTotal { return true }
             var usage = (info["last_token_usage"] as? [String: Any]).map(tokens(from:))
             if usage == nil, let totalUsage, totalUsage.total > 0 {
                 if let previousTotal {
@@ -2036,8 +2101,13 @@ final class UsageStore: ObservableObject {
             }
 
             if let usage, usage.hasTokenBreakdown {
-                entries.append(
-                    makeEntry(
+                var matchedResponse: String?
+                if let request = latestRequest, request.usage == usage || (totalUsage != nil && request.cumulative == totalUsage) {
+                    pendingRequests.removeValue(forKey: request.id)
+                    guard countedResponses.insert(request.id).inserted else { return true }
+                    matchedResponse = request.id
+                }
+                var entry = makeEntry(
                         timestamp: timestamp,
                         sessionID: sessionID,
                         chatTitle: chatTitle,
@@ -2047,7 +2117,8 @@ final class UsageStore: ObservableObject {
                         file: url,
                         line: lineNumber
                     )
-                )
+                entry.responseID = matchedResponse
+                entries.append(entry)
             }
             return true
         }
@@ -2071,7 +2142,7 @@ final class UsageStore: ObservableObject {
         }
         var tokenSeconds: [String] = []
         _ = forEachLine(in: url) { line, _ in
-            guard line.contains("\"type\":\"token_count\""),
+            guard line.contains("\"token_count\""),
                   let object = jsonObject(line),
                   object["type"] as? String == "event_msg",
                   let payload = object["payload"] as? [String: Any],
@@ -2092,11 +2163,8 @@ final class UsageStore: ObservableObject {
     }
 
     nonisolated private static func filePrefixContainsReplayMarker(_ url: URL) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
+        guard let handle = try? SessionLogInput(url: url) else {
             return false
-        }
-        defer {
-            try? handle.close()
         }
         do {
             guard let prefix = try handle.read(upToCount: 16 * 1024) else {
@@ -2110,11 +2178,8 @@ final class UsageStore: ObservableObject {
     }
 
     nonisolated private static func forEachLine(in url: URL, _ body: (String, Int) -> Bool) -> LineReadDiagnostics {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
+        guard let handle = try? SessionLogInput(url: url) else {
             return LineReadDiagnostics(issueCount: 1, latestIssue: "could not open for reading")
-        }
-        defer {
-            try? handle.close()
         }
 
         var buffer = Data()
@@ -2134,12 +2199,11 @@ final class UsageStore: ObservableObject {
             guard shouldDecodeLine(lineData) else {
                 return true
             }
-            guard lineData.count <= Self.maximumLogLineBytes else {
-                recordLineIssue("exceeds the 8 MB safety limit")
+            guard lineData.count <= maximumLineBytes(for: lineData) else {
+                recordLineIssue("exceeds the \(maximumLineBytes(for: lineData) / (1024 * 1024)) MB safety limit")
                 return true
             }
-            let dataForString = lineData.range(of: Self.tokenCountMarker) == nil ? lineData.prefix(8192) : lineData[...]
-            if let line = String(data: Data(dataForString), encoding: .utf8) {
+            if let line = String(data: lineData, encoding: .utf8) {
                 return body(line, lineNumber)
             } else {
                 recordLineIssue("is not valid UTF-8")
@@ -2176,9 +2240,9 @@ final class UsageStore: ObservableObject {
                 }
             }
 
-            if buffer.count > Self.maximumLogLineBytes {
+            if buffer.count > maximumLineBytes(for: buffer) {
                 if !discardingOversizedLine && shouldDecodeLine(buffer) {
-                    recordLineIssue("exceeds the 8 MB safety limit")
+                    recordLineIssue("exceeds the \(maximumLineBytes(for: buffer) / (1024 * 1024)) MB safety limit")
                 }
                 buffer.removeAll(keepingCapacity: true)
                 discardingOversizedLine = true
@@ -2193,9 +2257,27 @@ final class UsageStore: ObservableObject {
     }
 
     nonisolated private static func shouldDecodeLine(_ data: Data) -> Bool {
-        data.range(of: Self.sessionMetaMarker) != nil ||
+        if let type = leadingRecordType(in: data), !["session_meta", "turn_context", "event_msg", "token_usage_record", "compacted"].contains(type) {
+            return false
+        }
+        return data.range(of: Self.sessionMetaMarker) != nil ||
             data.range(of: Self.turnContextMarker) != nil ||
-            data.range(of: Self.tokenCountMarker) != nil
+            data.range(of: Self.tokenCountMarker) != nil ||
+            data.range(of: Self.usageRecordMarker) != nil ||
+            data.range(of: Self.compactedMarker) != nil
+    }
+
+    nonisolated private static func maximumLineBytes(for data: Data) -> Int {
+        // Compaction markers can include a large replacement history. Other
+        // usage records retain the smaller limit; no line can grow unbounded.
+        leadingRecordType(in: data) == "compacted" ? 32 * 1024 * 1024 : Self.maximumLogLineBytes
+    }
+
+    nonisolated private static func leadingRecordType(in data: Data) -> String? {
+        let prefix = String(decoding: data.prefix(512), as: UTF8.self)
+        guard let match = Self.recordTypePrefix?.firstMatch(in: prefix, range: NSRange(prefix.startIndex..., in: prefix)),
+              let range = Range(match.range(at: 1), in: prefix) else { return nil }
+        return String(prefix[range])
     }
 
     nonisolated private static func extractStringField(_ field: String, from line: String) -> String? {
@@ -2446,7 +2528,10 @@ final class UsageStore: ObservableObject {
     }
 
     nonisolated private static func sessionIDFromFilename(_ url: URL) -> String? {
-        let name = url.deletingPathExtension().lastPathComponent
+        let plainURL = url.lastPathComponent.hasSuffix(".jsonl.zst") ? url.deletingPathExtension() : url
+        let name = plainURL.deletingPathExtension().lastPathComponent
+        let uuidSuffix = String(name.suffix(36))
+        if UUID(uuidString: uuidSuffix) != nil { return uuidSuffix }
         guard let range = name.range(of: "019", options: .backwards) else {
             return nil
         }
@@ -2743,7 +2828,7 @@ final class UsageStore: ObservableObject {
     static let defaultRateSourceName = "OpenAI API pricing"
     static let defaultRateSourceURL = URL(string: "https://developers.openai.com/api/docs/pricing")!
     static let defaultRateVerifiedDate = "2026-10-14"
-    static let defaultRateLimitations = "API-equivalent estimate, not a subscription bill. Local logs do not expose cache writes or tool-call charges; total-only rows use the input rate. Requests over 272K input tokens, processing modes, and regional pricing can differ."
+    static let defaultRateLimitations = "API-equivalent estimate, not a subscription bill. Estimates exclude cache writes and tool-call charges; total-only rows use the input rate. Requests over 272K input tokens, processing modes, and regional pricing can differ."
     static let defaultRateSourceSummary = "\(defaultRateProfileName), verified \(defaultRateVerifiedDate)"
     static let defaultRateSourceDetail = "\(defaultRateSourceName) / \(defaultRateVerifiedDate)"
 
@@ -2920,7 +3005,7 @@ final class UsageStore: ObservableObject {
     private static let normalizedBuiltInModels = defaultRates
         .map { normalizedModelIdentifier($0.model) }
         .sorted { $0.count > $1.count }
-    nonisolated private static let parseCacheVersion = 5
+    nonisolated private static let parseCacheVersion = 7
 
     private static let byteCountFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -2932,10 +3017,13 @@ final class UsageStore: ObservableObject {
 
     nonisolated private static let fractionalISOFormatStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
     nonisolated private static let isoFormatStyle = Date.ISO8601FormatStyle()
+    nonisolated private static let recordTypePrefix = try? NSRegularExpression(pattern: #"^\s*\{\s*(?:"timestamp"\s*:\s*"[^"]*"\s*,\s*)?(?:"ordinal"\s*:\s*\d+\s*,\s*)?"type"\s*:\s*"([a-z_]+)""#)
 
-    nonisolated private static let sessionMetaMarker = Data(#""type":"session_meta""#.utf8)
-    nonisolated private static let turnContextMarker = Data(#""type":"turn_context""#.utf8)
-    nonisolated private static let tokenCountMarker = Data(#""type":"token_count""#.utf8)
+    nonisolated private static let sessionMetaMarker = Data(#""session_meta""#.utf8)
+    nonisolated private static let turnContextMarker = Data(#""turn_context""#.utf8)
+    nonisolated private static let tokenCountMarker = Data(#""token_count""#.utf8)
+    nonisolated private static let usageRecordMarker = Data(#""token_usage_record""#.utf8)
+    nonisolated private static let compactedMarker = Data(#""compacted""#.utf8)
     nonisolated private static let threadSpawnMarker = Data("thread_spawn".utf8)
     nonisolated private static let forkedFromMarker = Data("forked_from_id".utf8)
     nonisolated private static let maximumLogLineBytes = 8 * 1024 * 1024

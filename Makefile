@@ -1,7 +1,7 @@
 APP_NAME ?= CodexUsageMonitor
 BUNDLE_IDENTIFIER ?= local.codex.usagemonitor
-VERSION ?= 0.5.2
-BUILD_NUMBER ?= 14
+VERSION ?= 0.5.3
+BUILD_NUMBER ?= 15
 MINIMUM_MACOS := 13.0
 ROOT := $(abspath ../..)
 DEFAULT_OUT_DIR := $(ROOT)/outputs
@@ -43,10 +43,13 @@ CONCURRENCY_MODULE_CACHE := $(BUILD_DIR)/ModuleCache-concurrency
 APP_ICON := Resources/AppIcon.icns
 MENU_BAR_ICON := Resources/MenuBarIcon.png
 SOURCES := $(wildcard Sources/*.swift)
-BUNDLE_RESOURCES := $(APP_ICON) $(MENU_BAR_ICON) Resources/PrivacyInfo.xcprivacy
+BUNDLE_RESOURCES := $(APP_ICON) $(MENU_BAR_ICON) Resources/PrivacyInfo.xcprivacy Resources/ThirdPartyNotices.txt
 PRIVACY_MANIFEST := Resources/PrivacyInfo.xcprivacy
 ENTITLEMENTS := Resources/Release.entitlements
-DATA_SOURCES := Sources/UsageData.swift Sources/PricingCatalog.swift
+DATA_SOURCES := Sources/UsageData.swift Sources/PricingCatalog.swift Sources/SessionLogInput.swift
+NATIVE_LIB := $(BUILD_DIR)/libUsageLogReader.a
+NATIVE_FLAGS := -import-objc-header Sources/UsageLogReader.h
+NATIVE_SOURCES := Sources/UsageLogReader.c Sources/UsageLogReader.h ThirdParty/zstd/zstddeclib.c ThirdParty/zstd/zstd.h ThirdParty/zstd/zstd_errors.h
 TEST_DATA_SOURCES := $(DATA_SOURCES) Sources/AppSettings.swift Sources/CodexLogWatcher.swift
 DIAGNOSTIC := $(BUILD_DIR)/DumpSummary
 DIAGNOSTIC_CACHE := $(BUILD_DIR)/diagnostic-usage-cache.json
@@ -65,6 +68,15 @@ SIGNATURE_POLICY ?= any
 .PHONY: all clean run diagnose demo-data verify-runtime verify-concurrency release release-signed release-notarized release-dmg-notarized release-manifest publish-preflight verify-release verify-public-release verify-public-source audit-public-history source-archive verify-source-archive verify-app verify-privacy verify-version verify-artifacts verify-public-artifacts verify-manifest verify-public-manifest package dmg package-dmg checksum-zip checksum-dmg checksum-source assets check test sign sign-developer-id sign-dmg notarize notarize-dmg staple staple-dmg prepare-info-plist require-clean-repo require-public-bundle-identifier require-sign-identity require-notary-profile print-version print-build
 
 all: $(EXECUTABLE)
+
+$(BUILD_DIR)/libUsageLogReader-%.a: $(NATIVE_SOURCES)
+	mkdir -p "$(BUILD_DIR)"
+	xcrun clang -std=c99 -O2 -DZSTD_DISABLE_ASM=1 -target $*-apple-macosx13.0 -c ThirdParty/zstd/zstddeclib.c -o "$(BUILD_DIR)/zstd-$*.o"
+	xcrun clang -std=c99 -O2 -target $*-apple-macosx13.0 -c Sources/UsageLogReader.c -o "$(BUILD_DIR)/UsageLogReader-$*.o"
+	xcrun libtool -static -o "$@" "$(BUILD_DIR)/zstd-$*.o" "$(BUILD_DIR)/UsageLogReader-$*.o"
+
+$(NATIVE_LIB): $(BUILD_DIR)/libUsageLogReader-arm64.a $(BUILD_DIR)/libUsageLogReader-x86_64.a
+	xcrun lipo -create -output "$@" $^
 
 assets: $(APP_ICON) $(MENU_BAR_ICON)
 
@@ -86,7 +98,7 @@ $(PREPARED_INFO_PLIST): Info.plist Makefile FORCE
 	/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $(MINIMUM_MACOS)" "$(PREPARED_INFO_PLIST).tmp"
 	@if cmp -s "$(PREPARED_INFO_PLIST).tmp" "$(PREPARED_INFO_PLIST)"; then rm "$(PREPARED_INFO_PLIST).tmp"; else mv "$(PREPARED_INFO_PLIST).tmp" "$(PREPARED_INFO_PLIST)"; fi
 
-$(EXECUTABLE): $(PREPARED_INFO_PLIST) $(SOURCES) Info.plist Makefile $(BUNDLE_RESOURCES) $(APP_ICON)
+$(EXECUTABLE): $(PREPARED_INFO_PLIST) $(SOURCES) Info.plist Makefile $(BUNDLE_RESOURCES) $(APP_ICON) $(NATIVE_LIB)
 	mkdir -p "$(MACOS_DIR)"
 	rm -rf "$(RESOURCES_DIR)"
 	mkdir -p "$(RESOURCES_DIR)"
@@ -95,8 +107,8 @@ $(EXECUTABLE): $(PREPARED_INFO_PLIST) $(SOURCES) Info.plist Makefile $(BUNDLE_RE
 	cp "$(PREPARED_INFO_PLIST)" "$(APP)/Contents/Info.plist"
 	cp $(BUNDLE_RESOURCES) "$(RESOURCES_DIR)/"
 	printf "APPL????" > "$(APP)/Contents/PkgInfo"
-	xcrun swiftc -O -target arm64-apple-macosx13.0 -module-cache-path "$(ARM64_MODULE_CACHE)" $(SOURCES) -o "$(ARM64_EXECUTABLE)" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
-	xcrun swiftc -O -target x86_64-apple-macosx13.0 -module-cache-path "$(X86_64_MODULE_CACHE)" $(SOURCES) -o "$(X86_64_EXECUTABLE)" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
+	xcrun swiftc $(NATIVE_FLAGS) -O -target arm64-apple-macosx13.0 -module-cache-path "$(ARM64_MODULE_CACHE)" $(SOURCES) -o "$(ARM64_EXECUTABLE)" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications $(NATIVE_LIB)
+	xcrun swiftc $(NATIVE_FLAGS) -O -target x86_64-apple-macosx13.0 -module-cache-path "$(X86_64_MODULE_CACHE)" $(SOURCES) -o "$(X86_64_EXECUTABLE)" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications $(NATIVE_LIB)
 	xcrun lipo -create -output "$(EXECUTABLE)" "$(ARM64_EXECUTABLE)" "$(X86_64_EXECUTABLE)"
 	chmod +x "$(EXECUTABLE)"
 	xattr -cr "$(APP)"
@@ -109,24 +121,24 @@ run: all
 verify-pricing-source: $(BUILD_DIR)/VerifyPricingSource
 	"$(BUILD_DIR)/VerifyPricingSource"
 
-$(BUILD_DIR)/VerifyPricingSource: $(DATA_SOURCES) Tools/VerifyPricingSource.swift
+$(BUILD_DIR)/VerifyPricingSource: $(DATA_SOURCES) Tools/VerifyPricingSource.swift $(NATIVE_LIB)
 	mkdir -p "$(BUILD_DIR)/ModuleCache-pricing"
-	xcrun swiftc -O -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-pricing" $(DATA_SOURCES) Tools/VerifyPricingSource.swift -o "$@" -framework SwiftUI -framework Combine
+	xcrun swiftc $(NATIVE_FLAGS) -O -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-pricing" $(DATA_SOURCES) Tools/VerifyPricingSource.swift -o "$@" -framework SwiftUI -framework Combine $(NATIVE_LIB)
 
 benchmark: $(BUILD_DIR)/BenchmarkSummary
 	"$(BUILD_DIR)/BenchmarkSummary" 30000
 
-$(BUILD_DIR)/BenchmarkSummary: $(DATA_SOURCES) Tools/BenchmarkSummary.swift
+$(BUILD_DIR)/BenchmarkSummary: $(DATA_SOURCES) Tools/BenchmarkSummary.swift $(NATIVE_LIB)
 	mkdir -p "$(BUILD_DIR)/ModuleCache-benchmark"
-	xcrun swiftc -O -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-benchmark" $(DATA_SOURCES) Tools/BenchmarkSummary.swift -o "$@" -framework SwiftUI -framework Combine
+	xcrun swiftc $(NATIVE_FLAGS) -O -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-benchmark" $(DATA_SOURCES) Tools/BenchmarkSummary.swift -o "$@" -framework SwiftUI -framework Combine $(NATIVE_LIB)
 
 .PHONY: render-preview
 render-preview: demo-data $(BUILD_DIR)/RenderDesignPreview
 	"$(BUILD_DIR)/RenderDesignPreview" "$(DEMO_OUT)" "$(BUILD_DIR)/design-previews"
 
-$(BUILD_DIR)/RenderDesignPreview: $(TEST_DATA_SOURCES) Sources/AppActions.swift Sources/Views.swift Tools/RenderDesignPreview.swift
+$(BUILD_DIR)/RenderDesignPreview: $(TEST_DATA_SOURCES) Sources/AppActions.swift Sources/Views.swift Tools/RenderDesignPreview.swift $(NATIVE_LIB)
 	mkdir -p "$(BUILD_DIR)/ModuleCache-preview"
-	xcrun swiftc -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-preview" $(TEST_DATA_SOURCES) Sources/AppActions.swift Sources/Views.swift Tools/RenderDesignPreview.swift -o "$@" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications -framework Charts
+	xcrun swiftc $(NATIVE_FLAGS) -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-preview" $(TEST_DATA_SOURCES) Sources/AppActions.swift Sources/Views.swift Tools/RenderDesignPreview.swift -o "$@" -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications -framework Charts $(NATIVE_LIB)
 
 demo-data:
 	python3 Tools/MakeDemoFixture.py --out "$(DEMO_OUT)" --replace
@@ -265,10 +277,10 @@ check: verify-version verify-concurrency all test diagnose verify-app
 
 verify-concurrency:
 	mkdir -p "$(CONCURRENCY_MODULE_CACHE)"
-	xcrun swiftc -typecheck -O -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" $(SOURCES) -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
-	xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(SOURCES) -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
-	xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(TEST_DATA_SOURCES) Tools/RunTests.swift -framework SwiftUI -framework Combine -framework ServiceManagement
-	xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(DATA_SOURCES) Tools/DumpSummary.swift -framework SwiftUI -framework Combine
+	xcrun swiftc $(NATIVE_FLAGS) -typecheck -O -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" $(SOURCES) -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
+	xcrun swiftc $(NATIVE_FLAGS) -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(SOURCES) -framework AppKit -framework SwiftUI -framework Combine -framework ServiceManagement -framework UserNotifications
+	xcrun swiftc $(NATIVE_FLAGS) -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(TEST_DATA_SOURCES) Tools/RunTests.swift -framework SwiftUI -framework Combine -framework ServiceManagement
+	xcrun swiftc $(NATIVE_FLAGS) -typecheck -target arm64-apple-macosx13.0 -module-cache-path "$(CONCURRENCY_MODULE_CACHE)" -warn-concurrency -strict-concurrency=complete -warnings-as-errors $(DATA_SOURCES) Tools/DumpSummary.swift -framework SwiftUI -framework Combine
 
 verify-version:
 	python3 "$(RELEASE_VERSION_VALIDATOR)" --repo "$(CURDIR)"
@@ -291,12 +303,14 @@ verify-app: all
 	test -f "$(APP)/Contents/Resources/AppIcon.icns"
 	test -f "$(APP)/Contents/Resources/MenuBarIcon.png"
 	test -f "$(APP)/Contents/Resources/PrivacyInfo.xcprivacy"
+	test -f "$(APP)/Contents/Resources/ThirdPartyNotices.txt"
 	test "$$(sips -g pixelWidth "$(APP)/Contents/Resources/AppIcon.icns" | awk '/pixelWidth/ { print $$2 }')" = "1024"
 	test "$$(sips -g pixelHeight "$(APP)/Contents/Resources/AppIcon.icns" | awk '/pixelHeight/ { print $$2 }')" = "1024"
 	test "$$(sips -g pixelWidth "$(APP)/Contents/Resources/MenuBarIcon.png" | awk '/pixelWidth/ { print $$2 }')" = "36"
 	test "$$(sips -g pixelHeight "$(APP)/Contents/Resources/MenuBarIcon.png" | awk '/pixelHeight/ { print $$2 }')" = "36"
 	python3 Tools/ValidatePrivacyManifest.py "$(PRIVACY_MANIFEST)" "$(APP)/Contents/Resources/PrivacyInfo.xcprivacy"
-	xcrun lipo "$(EXECUTABLE)" -verify_arch arm64 x86_64
+	xcrun lipo "$(EXECUTABLE)" -verify_arch arm64
+	xcrun lipo "$(EXECUTABLE)" -verify_arch x86_64
 	python3 Tools/VerifyAppSignature.py "$(APP)"
 
 verify-privacy: all
@@ -329,15 +343,15 @@ test: $(TEST_RUNNER) $(RELEASE_TOOL_TESTS)
 diagnose: $(DIAGNOSTIC)
 	"$(DIAGNOSTIC)" "$(abspath $(DIAGNOSTIC_CACHE))"
 
-$(TEST_RUNNER): $(TEST_DATA_SOURCES) Tools/RunTests.swift
+$(TEST_RUNNER): $(TEST_DATA_SOURCES) Tools/RunTests.swift $(NATIVE_LIB)
 	mkdir -p "build"
 	mkdir -p "$(TEST_MODULE_CACHE)"
-	xcrun swiftc -O -target arm64-apple-macosx13.0 -module-cache-path "$(TEST_MODULE_CACHE)" $(TEST_DATA_SOURCES) Tools/RunTests.swift -o "$(TEST_RUNNER)" -framework SwiftUI -framework Combine -framework ServiceManagement
+	xcrun swiftc $(NATIVE_FLAGS) -O -target arm64-apple-macosx13.0 -module-cache-path "$(TEST_MODULE_CACHE)" $(TEST_DATA_SOURCES) Tools/RunTests.swift -o "$(TEST_RUNNER)" -framework SwiftUI -framework Combine -framework ServiceManagement $(NATIVE_LIB)
 
-$(DIAGNOSTIC): $(DATA_SOURCES) Tools/DumpSummary.swift
+$(DIAGNOSTIC): $(DATA_SOURCES) Tools/DumpSummary.swift $(NATIVE_LIB)
 	mkdir -p "build"
 	mkdir -p "$(DIAG_MODULE_CACHE)"
-	xcrun swiftc -O -target arm64-apple-macosx13.0 -module-cache-path "$(DIAG_MODULE_CACHE)" $(DATA_SOURCES) Tools/DumpSummary.swift -o "$(DIAGNOSTIC)" -framework SwiftUI -framework Combine
+	xcrun swiftc $(NATIVE_FLAGS) -O -target arm64-apple-macosx13.0 -module-cache-path "$(DIAG_MODULE_CACHE)" $(DATA_SOURCES) Tools/DumpSummary.swift -o "$(DIAGNOSTIC)" -framework SwiftUI -framework Combine $(NATIVE_LIB)
 
 clean:
 	rm -rf "$(APP)" "$(RELEASE_ZIP)" "$(RELEASE_DMG)" "$(ZIP_SHA256)" "$(DMG_SHA256)" "$(MANIFEST)" "$(SOURCE_ARCHIVE)" "$(SOURCE_ARCHIVE_SHA256)" "$(BUILD_DIR)"

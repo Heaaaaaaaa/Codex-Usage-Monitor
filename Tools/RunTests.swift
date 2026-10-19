@@ -2207,14 +2207,21 @@ private func testParserBoundsOversizedRelevantLines() throws {
 
     let sessionFile = codexHome.appendingPathComponent("sessions/rollout-\(currentDayString(daysAgo: 1))-\(sessionID).jsonl")
     try FileManager.default.createDirectory(at: sessionFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try "\(sessionMeta)\n\(oversizedTokenLine)\n\(validTokenLine)\n".write(to: sessionFile, atomically: true, encoding: .utf8)
+    let pendingCompaction = try jsonLine([
+        "type": "token_usage_record", "timestamp": isoString(daysAgo: 1),
+        "payload": ["response_id": "large-compaction", "usage": tokenUsage(input: 180, cached: 0, output: 20, reasoning: 0, total: 200)]
+    ])
+    let padding = String(repeating: "x", count: 9 * 1024 * 1024)
+    let largeCompaction = "{\"timestamp\":\"\(isoString(daysAgo: 1))\",\"ordinal\":123,\"type\":\"compacted\",\"payload\":{\"compaction_response_id\":\"large-compaction\",\"history\":\"\(padding)\"}}"
+    let unrelatedResponse = "{\"type\":\"response_item\",\"payload\":{\"nested\":\"token_usage_record\",\"text\":\"\(padding)\"}}"
+    try "\(sessionMeta)\n\(oversizedTokenLine)\n\(validTokenLine)\n\(pendingCompaction)\n\(largeCompaction)\n\(unrelatedResponse)\n".write(to: sessionFile, atomically: true, encoding: .utf8)
 
     let store = UsageStore(codexHome: codexHome, preferences: isolatedPreferences(), cacheURL: cacheURL)
     store.dateWindow = .sevenDays
     store.loadFromDiskSynchronously()
 
-    try requireEqual(store.summary.eventCount, 1, "oversized parser keeps following valid event")
-    try requireEqual(store.summary.tokens.total, 440, "oversized parser valid token total")
+    try requireEqual(store.summary.eventCount, 2, "oversized parser keeps valid events and compaction markers")
+    try requireEqual(store.summary.tokens.total, 640, "oversized parser includes large compaction marker usage")
     try requireEqual(store.scanDiagnostics.parseIssueCount, 1, "oversized parser issue count")
     try require(store.scanDiagnostics.latestParseIssue?.contains("8 MB safety limit") == true, "oversized parser issue detail")
 }
@@ -2408,6 +2415,133 @@ Prices per 1M tokens.
 | gpt-6.1-sol | $1.00 | $0.05 | $1.25 | $5.00 | $2.00 | $0.10 | $2.50 | $7.50 |
 """
 
+// Zstandard v1.5.7 fixture: one synthetic 2020-01-01 request, 120 tokens.
+private let compressedUsageFixture = Data(base64Encoded: "KLUv/WTuAC0HAPLOLCBgSasDCKrxizeUpsWQ2Ul2+XNHEFCH+q3gVJboiCVwAoYYY8xjUb39g6TktbeslPnJo5v9SYHEVFlq/WQa6NzA1zRR3KRmtezBaz/v1+xKTxO2E3apnyrouUEmykSHUWBkYWSRRx5Hh041P2GI8b0UYZkBgNValX4IggN0fVhYP0cCkKJhcvRF2bqfq2v9GuacKWWULpgyKwPdrqOz9gQ6U7sgFPy5anXpbWNWPrpCRD8REQD0YFJwc4aHNw6oTtnkjJ6y4vR8c2kf1IpvI2mZRZk8rsw7vK7TCMuJEmBtoaB5+Rg1")!
+
+@MainActor
+private func testCompressedLogsAndDuplicateFormats() throws {
+    let root = try makeTemporaryCodexHome()
+    let cache = root.appendingPathComponent("parse-cache.json")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let archive = root.appendingPathComponent("sessions/fixture.jsonl.zst")
+    try compressedUsageFixture.write(to: archive)
+    let store = UsageStore(codexHome: root, preferences: isolatedPreferences(), cacheURL: cache)
+    store.dateWindow = .lifetime
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.summary.tokens.total, 120, "compressed historical usage is loaded")
+    try requireEqual(store.summary.sessionCount, 1, "compressed thread identity")
+    try requireEqual(store.entries.first?.sessionID, "compressed-thread", "thread ID preferred to runtime session")
+    try requireEqual(store.entries.first?.projectPath, "/tmp/Synthetic Project", "structured metadata project")
+    try requireEqual(store.scanDiagnostics.parseIssueCount, 0, "valid compressed stream")
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.scanDiagnostics.cachedFileCount, 1, "compressed parse cached")
+    let input = try SessionLogInput(url: archive)
+    var plain = Data()
+    while let chunk = try input.read(upToCount: 7) { plain.append(chunk) }
+    try plain.write(to: root.appendingPathComponent("sessions/fixture.jsonl"))
+    try compressedUsageFixture.write(to: root.appendingPathComponent("archived_sessions/fixture.jsonl.zst"))
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.scanDiagnostics.scannedFileCount, 1, "plain and compressed active/archive copies scanned once")
+    try requireEqual(store.summary.tokens.total, 120, "compression never doubles usage")
+    try require(SessionLogDiscovery.recentFiles(codexHome: root).contains { $0.lastPathComponent.hasSuffix(".jsonl.zst") }, "compressed log watching")
+}
+
+@MainActor
+private func testCompressedStreamErrorsAndConcatenatedFrames() throws {
+    let root = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let archive = root.appendingPathComponent("sessions/fixture.jsonl.zst")
+    try (compressedUsageFixture + compressedUsageFixture).write(to: archive)
+    let reader = try SessionLogInput(url: archive)
+    var decoded = Data()
+    while let chunk = try reader.read(upToCount: 13) { decoded.append(chunk) }
+    try requireEqual(decoded.count, 2 * 494, "concatenated frames fully decoded in bounded chunks")
+    for bad in [Data("not a zstd stream".utf8), Data(compressedUsageFixture.dropLast(9))] {
+        try bad.write(to: archive)
+        let store = UsageStore(codexHome: root, preferences: isolatedPreferences(), cacheURL: root.appendingPathComponent(UUID().uuidString))
+        store.dateWindow = .lifetime
+        store.loadFromDiskSynchronously()
+        try require(store.scanDiagnostics.parseIssueCount > 0, "corrupt/truncated compression is reported, not silently ignored")
+    }
+}
+
+@MainActor
+private func testThreadIdentityWithSharedRuntimeAndSpacedJSON() throws {
+    let root = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: root) }
+    for number in 1...2 {
+        let metadata = "{ \"type\" : \"session_meta\", \"payload\" : { \"id\" : \"thread-\(number)\", \"session_id\" : \"shared-runtime\", \"model\" : \"gpt-5.5\", \"instructions\": \"" + String(repeating: "x", count: 12_000) + "\" } }"
+        let usage = "{ \"timestamp\" : \"2020-01-0\(number)T12:00:00Z\", \"type\" : \"event_msg\", \"payload\" : { \"type\" : \"token_count\", \"info\" : { \"last_token_usage\" : { \"input_tokens\" : 100, \"output_tokens\" : 20, \"total_tokens\" : 120 } } } }"
+        try (metadata + "\n" + usage + "\n").write(to: root.appendingPathComponent("sessions/\(number).jsonl"), atomically: true, encoding: .utf8)
+    }
+    let store = UsageStore(codexHome: root, preferences: isolatedPreferences(), cacheURL: root.appendingPathComponent("cache"))
+    store.dateWindow = .lifetime
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.summary.sessionCount, 2, "shared runtime does not merge distinct chats")
+    try requireEqual(store.summary.tokens.total, 240, "JSON whitespace does not lose usage")
+}
+
+@MainActor
+private func testRepeatedCumulativeSnapshotsDoNotRepeatRequest() throws {
+    let root = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let first = tokenUsage(input: 100, cached: 80, output: 20, reasoning: 5, total: 120)
+    let reset = tokenUsage(input: 50, cached: 40, output: 10, reasoning: 3, total: 60)
+    try writeJSONL(root.appendingPathComponent("sessions/repeated.jsonl"), [
+        ["type": "session_meta", "session_id": "thread", "model": "gpt-5.5"],
+        tokenEvent(timestamp: isoString(daysAgo: 0), info: ["last_token_usage": first, "total_token_usage": first]),
+        tokenEvent(timestamp: isoString(daysAgo: 0, secondsOffset: 1), info: ["last_token_usage": first, "total_token_usage": first]),
+        tokenEvent(timestamp: isoString(daysAgo: 0, secondsOffset: 2), info: ["last_token_usage": reset, "total_token_usage": reset]),
+        tokenEvent(timestamp: isoString(daysAgo: 0, secondsOffset: 3), info: ["last_token_usage": reset, "total_token_usage": reset])
+    ])
+    let store = UsageStore(codexHome: root, preferences: isolatedPreferences(), cacheURL: root.appendingPathComponent("cache"))
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.summary.eventCount, 2, "status-only cumulative repeats excluded")
+    try requireEqual(store.summary.tokens.total, 180, "counter resets still count new requests")
+}
+
+@MainActor
+private func testCompactionRecordsWithoutDoubleCountingSnapshots() throws {
+    let root = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let usage = tokenUsage(input: 100, cached: 80, output: 20, reasoning: 5, total: 120)
+    func request(_ id: String, _ offset: Double) -> [String: Any] {
+        ["type": "token_usage_record", "timestamp": isoString(daysAgo: 0, secondsOffset: offset), "payload": ["response_id": id, "usage": usage, "model": "gpt-5.5"]]
+    }
+    func marker(_ id: String) -> [String: Any] { ["type": "compacted", "payload": ["compaction_response_id": id]] }
+    try writeJSONL(root.appendingPathComponent("sessions/compactions.jsonl"), [
+        ["type": "session_meta", "session_id": "thread", "model": "gpt-5.5"],
+        request("normal", 0),
+        tokenEvent(timestamp: isoString(daysAgo: 0, secondsOffset: 1), info: ["last_token_usage": usage, "total_token_usage": usage]),
+        marker("normal"),
+        request("remote-compaction", 2), marker("remote-compaction"), marker("remote-compaction"),
+        marker("out-of-order"), request("out-of-order", 3), request("out-of-order", 4),
+        request("unmatched-normal-record", 5)
+    ])
+    let store = UsageStore(codexHome: root, preferences: isolatedPreferences(), cacheURL: root.appendingPathComponent("cache"))
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.summary.eventCount, 3, "normal request and two unique compactions only")
+    try requireEqual(store.summary.tokens.total, 360, "new records do not double mirrored snapshots")
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.summary.tokens.total, 360, "response identities survive cached scans")
+}
+
+@MainActor
+private func testLifetimeTrendIncludesAllAvailableHistory() throws {
+    let store = configuredStore()
+    store.dateWindow = .lifetime
+    store.entries.append(makeEntry(id: "old", daysAgo: 200, sessionID: "old", chatTitle: "Old", projectPath: "/tmp/test", model: "gpt-5.5", tokens: UsageTokens(input: 100, cachedInput: 0, output: 20, reasoningOutput: 0, total: 120)))
+    store.recompute()
+    try require(store.dailyRows.count > 190, "lifetime includes history older than fourteen days")
+    try requireEqual(store.dailyRows.reduce(0) { $0 + $1.tokens.total }, store.summary.tokens.total, "entire lifetime appears in chart")
+    try requireApprox(store.dailyRows.reduce(0) { $0 + $1.cost }, store.summary.cost, "lifetime chart cost reconciles")
+    try require(store.historyCaption.hasPrefix("Local:"), "history range labeled as local coverage")
+    store.entries.append(makeEntry(id: "older", daysAgo: 800, sessionID: "older", chatTitle: "Older", projectPath: "/tmp/test", model: "gpt-5.5", tokens: UsageTokens(input: 100, cachedInput: 0, output: 20, reasoningOutput: 0, total: 120)))
+    store.recompute()
+    try require(store.dailyRows.count < 30, "multi-year history uses monthly buckets")
+    try requireEqual(store.dailyRows.reduce(0) { $0 + $1.tokens.total }, store.summary.tokens.total, "monthly buckets retain all historical usage")
+}
+
 private func testPricingDocumentParser() throws {
     let catalog = try PricingCatalog.parse(pricingDocumentFixture)
     try requireEqual(catalog.rates.count, 2, "only standard rows parsed")
@@ -2510,6 +2644,12 @@ private struct RunTests {
     @MainActor
     static func main() {
         let tests: [(String, @MainActor () throws -> Void)] = [
+            ("compressed logs and format deduplication", testCompressedLogsAndDuplicateFormats),
+            ("compressed stream validation", testCompressedStreamErrorsAndConcatenatedFrames),
+            ("thread IDs and JSON whitespace", testThreadIdentityWithSharedRuntimeAndSpacedJSON),
+            ("complete lifetime trend", testLifetimeTrendIncludesAllAvailableHistory),
+            ("repeated cumulative status snapshots", testRepeatedCumulativeSnapshotsDoNotRepeatRequest),
+            ("compaction usage without double counting", testCompactionRecordsWithoutDoubleCountingSnapshots),
             ("official pricing document parser", testPricingDocumentParser),
             ("automatic pricing merge and persistence", testAutomaticPricingMerge),
             ("pricing refresh scheduling and offline fallback", testPricingRefreshScheduling),

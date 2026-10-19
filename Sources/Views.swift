@@ -1,6 +1,9 @@
 import SwiftUI
 import Charts
 
+// Retain the macOS 13 property wrapper when newer SDKs also expose a State macro.
+private typealias ViewState<Value> = SwiftUI.State<Value>
+
 extension Notification.Name {
     static let showCodexUsageSettings = Notification.Name("CodexUsageMonitor.showSettings")
     static let codexUsagePopoverDidClose = Notification.Name("CodexUsageMonitor.popoverDidClose")
@@ -75,13 +78,13 @@ struct RootView: View {
     let onClose: () -> Void
     let onQuit: () -> Void
 
-    @State private var showingSettings = false
-    @State private var selectedSettingsPage: SettingsPage = .general
-    @State private var selectedBreakdown: BreakdownKind = .projects
-    @State private var confirmingClearCache = false
-    @State private var rateDraft: [ModelRate] = []
-    @State private var rateDraftBaseline: [ModelRate] = []
-    @State private var dashboardPage: DashboardPage = .overview
+    @ViewState private var showingSettings = false
+    @ViewState private var selectedSettingsPage: SettingsPage = .general
+    @ViewState private var selectedBreakdown: BreakdownKind = .projects
+    @ViewState private var confirmingClearCache = false
+    @ViewState private var rateDraft: [ModelRate] = []
+    @ViewState private var rateDraftBaseline: [ModelRate] = []
+    @ViewState private var dashboardPage: DashboardPage = .overview
 
     init(store: UsageStore, appSettings: AppSettings, onClose: @escaping () -> Void,
          onQuit: @escaping () -> Void, initialPage: DashboardPage = .overview,
@@ -280,7 +283,7 @@ struct RootView: View {
                 PrimaryFigure(
                     title: "Total tokens",
                     value: UsageStore.compactNumber(store.summary.tokens.total),
-                    caption: store.dateWindow.title
+                    caption: store.historyCaption
                 )
                 PrimaryFigure(
                     title: "Estimated cost",
@@ -1463,9 +1466,9 @@ private struct TrendPanel: View {
     let rows: [DailyUsageRow]
     @Binding var metric: TrendMetric
 
-    private var axisLabels: [String] {
-        guard rows.count > 7 else { return rows.map(\.label) }
-        return (0..<5).map { rows[(2 * $0 + 1) * rows.count / 10].label }
+    private var axisPositions: [Double] {
+        guard rows.count > 7 else { return rows.indices.map(Double.init) }
+        return (0..<5).map { Double((2 * $0 + 1) * rows.count / 10) }
     }
 
     private func value(for row: DailyUsageRow) -> Double {
@@ -1490,11 +1493,14 @@ private struct TrendPanel: View {
                 if rows.isEmpty {
                     EmptyState(text: "No daily activity for this filter")
                 } else {
-                    Chart(rows) { row in
-                        BarMark(
-                            x: .value("Day", row.label),
-                            y: .value(metric == .tokens ? "Tokens" : "USD", value(for: row)),
-                            width: rows.count == 1 ? .fixed(28) : .ratio(0.65)
+                    Chart(Array(rows.enumerated()), id: \.element.id) { item in
+                        let row = item.element
+                        let halfWidth = rows.count == 1 ? 0.03 : 0.325
+                        RectangleMark(
+                            xStart: .value("Day", Double(item.offset) - halfWidth),
+                            xEnd: .value("Day", Double(item.offset) + halfWidth),
+                            yStart: .value("Baseline", 0),
+                            yEnd: .value(metric == .tokens ? "Tokens" : "USD", value(for: row))
                         )
                         .foregroundStyle(metric == .tokens ? AppColor.accent : AppColor.blue)
                         .cornerRadius(2)
@@ -1503,10 +1509,11 @@ private struct TrendPanel: View {
                             ? "\(UsageStore.compactNumber(row.tokens.total)) tokens"
                             : "\(UsageStore.currency(row.cost)) estimated cost")
                     }
+                    .chartXScale(domain: -0.5...max(0.5, Double(rows.count) - 0.5))
                     .chartYAxis {
                         AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { axis in
                             AxisGridLine().foregroundStyle(AppColor.border)
-                            AxisValueLabel {
+                            AxisValueLabel(anchor: .trailing) {
                                 if let value = axis.as(Double.self) {
                                     Text(metric == .tokens ? UsageStore.compactNumber(Int(min(value, Double(Int.max / 2)))) : UsageStore.currency(value))
                                         .font(.system(size: 9))
@@ -1516,8 +1523,14 @@ private struct TrendPanel: View {
                         }
                     }
                     .chartXAxis {
-                        AxisMarks(values: axisLabels) { _ in
-                            AxisValueLabel().foregroundStyle(AppColor.secondaryText)
+                        AxisMarks(values: axisPositions) { axis in
+                            AxisValueLabel(anchor: .top) {
+                                if let position = axis.as(Double.self), rows.indices.contains(Int(position)) {
+                                    Text(rows[Int(position)].label)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(AppColor.secondaryText)
+                                }
+                            }
                         }
                     }
                     .frame(height: 112)

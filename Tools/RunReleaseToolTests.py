@@ -121,14 +121,14 @@ def test_parse_cache_safeguards() -> None:
     required_snippets = [
         "DIAGNOSTIC_CACHE :=",
         '"$(DIAGNOSTIC)" "$(abspath $(DIAGNOSTIC_CACHE))"',
-        "CommandLine.arguments.dropFirst().first",
+        "arguments.first(where:",
         "retitledParseCache",
         "mergedParseCache",
         "Darwin.lockf",
         "session index changes do not invalidate parsed token files",
         "package: all",
         "package-dmg: all",
-        "parseCacheVersion = 5",
+        "parseCacheVersion = 7",
         "UsageEventSignature",
         "last_token_usage",
         "threadSpawnMarker",
@@ -142,13 +142,13 @@ def test_parse_cache_safeguards() -> None:
 
 def test_release_version_validation() -> None:
     repo = Path(__file__).resolve().parent.parent
-    version, build, errors = release_version_errors(repo, "v0.5.2")
-    require_equal(version, "0.5.2", "release version")
-    require_equal(build, "14", "release build")
+    version, build, errors = release_version_errors(repo, "v0.5.3")
+    require_equal(version, "0.5.3", "release version")
+    require_equal(build, "15", "release build")
     require_equal(errors, [], "live release metadata validates")
 
     _, _, bad_tag_errors = release_version_errors(repo, "v9.9.9")
-    require(any("release tag must be v0.5.2" in error for error in bad_tag_errors), "mismatched release tag rejected")
+    require(any("release tag must be v0.5.3" in error for error in bad_tag_errors), "mismatched release tag rejected")
 
     with tempfile.TemporaryDirectory() as folder:
         fixture = Path(folder)
