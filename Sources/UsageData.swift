@@ -177,7 +177,7 @@ enum WindowLimitKind: Equatable {
     }
 }
 
-struct ResetCredit: Codable, Hashable, Identifiable {
+struct ResetCredit: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var label: String
     var expiresAt: Date?
@@ -468,6 +468,13 @@ final class UsageStore: ObservableObject {
     @Published var unpricedModelNames: [String] = []
     @Published var healthStatus: UsageHealthStatus = .hidden
     @Published var latestLimits: RateLimitSnapshot?
+    @Published private(set) var accountResetSyncEnabled: Bool
+    @Published private(set) var accountResetInventory: AccountResetInventory?
+    @Published private(set) var isUpdatingAccountResets = false
+    @Published private(set) var accountResetSyncMessage = "Off / local logs only"
+    private var lastAccountResetAttempt: Date?
+    private var accountResetRevision: UInt64 = 0
+    private var accountResetSyncFailed = false
     @Published var lastRefreshText: String = "Never"
     @Published var isRefreshing: Bool = false
     @Published var rates: [ModelRate] = UsageStore.defaultRates {
@@ -508,6 +515,7 @@ final class UsageStore: ObservableObject {
         cacheURL: URL? = nil
     ) {
         self.preferences = preferences
+        self.accountResetSyncEnabled = preferences.bool(forKey: "accountResetSyncEnabled.v1")
         self.codexHome = (codexHome ?? Self.loadSavedCodexHome(preferences: preferences)).standardizedFileURL
         self.cacheURLOverride = cacheURL
         self.dateWindow = Self.loadSavedDateWindow(preferences: preferences)
@@ -530,6 +538,76 @@ final class UsageStore: ObservableObject {
         let known = Set(result.map { Self.normalizedModelIdentifier($0.model) })
         result.append(contentsOf: Self.defaultRates.filter { !known.contains(Self.normalizedModelIdentifier($0.model)) })
         return result
+    }
+
+    func setAccountResetSyncEnabled(
+        _ enabled: Bool,
+        fetch: @escaping @Sendable (URL) async throws -> AccountResetInventory = { try await AccountResetClient.fetch(codexHome: $0) }
+    ) {
+        guard enabled != accountResetSyncEnabled else { return }
+        accountResetSyncEnabled = enabled
+        preferences.set(enabled, forKey: "accountResetSyncEnabled.v1")
+        clearAccountResetState()
+        if enabled { refreshAccountResetsIfNeeded(force: true, fetch: fetch) }
+    }
+
+    private func clearAccountResetState() {
+        accountResetRevision &+= 1
+        accountResetInventory = nil
+        isUpdatingAccountResets = false
+        lastAccountResetAttempt = nil
+        accountResetSyncFailed = false
+        accountResetSyncMessage = accountResetSyncEnabled ? "Ready to sync" : "Off / local logs only"
+    }
+
+    func refreshAccountResetsIfNeeded(
+        force: Bool = false,
+        now: Date = Date(),
+        fetch: @escaping @Sendable (URL) async throws -> AccountResetInventory = { try await AccountResetClient.fetch(codexHome: $0) }
+    ) {
+        guard accountResetSyncEnabled, !isUpdatingAccountResets else { return }
+        if !force, let lastAccountResetAttempt, now.timeIntervalSince(lastAccountResetAttempt) < 300 { return }
+        lastAccountResetAttempt = now
+        isUpdatingAccountResets = true
+        accountResetSyncMessage = "Syncing with Codex..."
+        let revision = accountResetRevision
+        let home = codexHome
+        Task {
+            do {
+                let inventory = try await fetch(home)
+                guard accountResetSyncEnabled, revision == accountResetRevision else { return }
+                accountResetInventory = inventory
+                accountResetSyncFailed = false
+                accountResetSyncMessage = "Synced " + Self.accountSyncTime(inventory.fetchedAt)
+            } catch {
+                guard accountResetSyncEnabled, revision == accountResetRevision else { return }
+                accountResetSyncFailed = true
+                accountResetSyncMessage = (error as? AccountResetError)?.errorDescription ?? "Account sync failed; saved count retained"
+            }
+            isUpdatingAccountResets = false
+        }
+    }
+
+    func displayedResetCredits(now: Date = Date()) -> [ResetCredit] {
+        if accountResetSyncEnabled { return accountResetInventory?.activeCredits(now: now) ?? [] }
+        return latestLimits?.resetCredits.filter { $0.expiresAt.map { $0 > now } ?? true } ?? []
+    }
+
+    func resetCreditDisplay(now: Date = Date()) -> ResetCreditDisplay {
+        guard accountResetSyncEnabled else { return Self.resetCreditDisplay(latestLimits, now: now) }
+        guard let inventory = accountResetInventory else {
+            return ResetCreditDisplay(value: isUpdatingAccountResets ? "Syncing" : "Unavailable", detail: accountResetSyncMessage)
+        }
+        let stale = accountResetSyncFailed || now.timeIntervalSince(inventory.fetchedAt) > 900
+        let detail = (stale ? "Saved / " : "Synced ") + Self.accountSyncTime(inventory.fetchedAt)
+        return ResetCreditDisplay(value: String(inventory.remainingCount(now: now)), detail: detail, isExpired: stale)
+    }
+
+    private static func accountSyncTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 
     func refreshPricingIfNeeded(
@@ -581,7 +659,8 @@ final class UsageStore: ObservableObject {
     }
 
     @discardableResult
-    func refresh() -> Bool {
+    func refresh(forceAccountSync: Bool = false) -> Bool {
+        refreshAccountResetsIfNeeded(force: forceAccountSync)
         guard !isRefreshing else {
             refreshPending = true
             return false
@@ -845,6 +924,7 @@ final class UsageStore: ObservableObject {
         }
         codexHome = newCodexHome
         dataSourceRevision &+= 1
+        clearAccountResetState()
         preferences.set(codexHome.path, forKey: Self.codexHomePathKey)
         resetLoadedUsage(message: "Codex log folder changed")
         codexHomeChanged?(codexHome)
@@ -856,6 +936,7 @@ final class UsageStore: ObservableObject {
         }
         codexHome = Self.defaultCodexHome
         dataSourceRevision &+= 1
+        clearAccountResetState()
         preferences.removeObject(forKey: Self.codexHomePathKey)
         resetLoadedUsage(message: "Using default Codex log folder")
         codexHomeChanged?(codexHome)
@@ -874,6 +955,7 @@ final class UsageStore: ObservableObject {
         codexHome = newCodexHome
         if codexHomeChanged {
             dataSourceRevision &+= 1
+            clearAccountResetState()
         }
         if newCodexHome.path == Self.defaultCodexHome.path {
             preferences.removeObject(forKey: Self.codexHomePathKey)
@@ -2340,8 +2422,9 @@ final class UsageStore: ObservableObject {
             return nil
         }
         let plan = limits["plan_type"] as? String ?? "unknown"
-        let resetCredits = parseResetCredits(limits["credits"])
-        let credits = resetCreditsDescription(limits["credits"], parsedCredits: resetCredits)
+        let resetValue = limits["rate_limit_reset_credits"] ?? limits["rateLimitResetCredits"] ?? limits["reset_credits"]
+        let resetCredits = parseResetCredits(resetValue)
+        let credits = resetCreditsDescription(resetValue, parsedCredits: resetCredits)
         return RateLimitSnapshot(
             seenAt: seenAt,
             planType: plan,
@@ -2365,7 +2448,10 @@ final class UsageStore: ObservableObject {
 
     nonisolated private static func resetCreditsDescription(_ value: Any?, parsedCredits: [ResetCredit]) -> String {
         if value == nil || value is NSNull {
-            return "No reset credits in latest local snapshot"
+            return "Reset count unavailable in local logs"
+        }
+        if let dict = value as? [String: Any], let count = intValue(dict["availableCount"] ?? dict["available_count"] ?? dict["available"]), count >= 0 {
+            return "\(count) reset credits available"
         }
         if !parsedCredits.isEmpty {
             return "\(parsedCredits.count) reset credit\(parsedCredits.count == 1 ? "" : "s") with expiry"
@@ -2373,13 +2459,7 @@ final class UsageStore: ObservableObject {
         if let array = value as? [Any] {
             return "\(array.count) reset credits reported"
         }
-        if let dict = value as? [String: Any] {
-            if let available = intValue(dict["available"]) {
-                return "\(available) reset credits available"
-            }
-            return "Reset credits reported"
-        }
-        return "Reset credit data available"
+        return "Reset count unavailable in local logs"
     }
 
     nonisolated private static func parseResetCredits(_ value: Any?) -> [ResetCredit] {
@@ -2746,17 +2826,19 @@ final class UsageStore: ObservableObject {
             return ResetCreditDisplay(value: "No data", detail: "No local snapshot")
         }
         let description = snapshot.resetCreditsDescription
+        let reportedCount = description.split(separator: " ").first.flatMap { Int($0) } ?? snapshot.resetCredits.count
         if !snapshot.resetCredits.isEmpty {
             let notExpired = snapshot.resetCredits.filter { credit in
                 credit.expiresAt.map { $0 > now } ?? true
             }
-            if notExpired.isEmpty && snapshot.resetCredits.allSatisfy({ $0.expiresAt != nil }) {
+            let expiredCount = snapshot.resetCredits.count - notExpired.count
+            if notExpired.isEmpty && expiredCount >= reportedCount && snapshot.resetCredits.allSatisfy({ $0.expiresAt != nil }) {
                 return ResetCreditDisplay(value: "Expired", detail: "New Codex activity needed", isExpired: true)
             }
             if notExpired.count != snapshot.resetCredits.count {
                 return ResetCreditDisplay(
-                    value: String(notExpired.count),
-                    detail: "\(notExpired.count) not expired in latest snapshot"
+                    value: String(max(0, reportedCount - expiredCount)),
+                    detail: "\(max(0, reportedCount - expiredCount)) not expired in latest snapshot"
                 )
             }
         }
@@ -2764,14 +2846,7 @@ final class UsageStore: ObservableObject {
             return ResetCreditDisplay(value: String(first), detail: description)
         }
 
-        let lower = description.lowercased()
-        if lower.contains("no reset credits") {
-            return ResetCreditDisplay(value: "None", detail: description)
-        }
-        if lower.contains("reported") || lower.contains("available") {
-            return ResetCreditDisplay(value: "Reported", detail: description)
-        }
-        return ResetCreditDisplay(value: "Data", detail: description)
+        return ResetCreditDisplay(value: "Unavailable", detail: "Not provided in local logs")
     }
 
     static func loadSavedRates(preferences: UserDefaults = .standard) -> [ModelRate] {
@@ -3005,7 +3080,7 @@ final class UsageStore: ObservableObject {
     private static let normalizedBuiltInModels = defaultRates
         .map { normalizedModelIdentifier($0.model) }
         .sorted { $0.count > $1.count }
-    nonisolated private static let parseCacheVersion = 7
+    nonisolated private static let parseCacheVersion = 8
 
     private static let byteCountFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()

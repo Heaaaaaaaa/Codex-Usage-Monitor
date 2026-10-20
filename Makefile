@@ -1,7 +1,7 @@
 APP_NAME ?= CodexUsageMonitor
 BUNDLE_IDENTIFIER ?= local.codex.usagemonitor
-VERSION ?= 0.5.3
-BUILD_NUMBER ?= 15
+VERSION ?= 0.5.4
+BUILD_NUMBER ?= 16
 MINIMUM_MACOS := 13.0
 ROOT := $(abspath ../..)
 DEFAULT_OUT_DIR := $(ROOT)/outputs
@@ -46,7 +46,7 @@ SOURCES := $(wildcard Sources/*.swift)
 BUNDLE_RESOURCES := $(APP_ICON) $(MENU_BAR_ICON) Resources/PrivacyInfo.xcprivacy Resources/ThirdPartyNotices.txt
 PRIVACY_MANIFEST := Resources/PrivacyInfo.xcprivacy
 ENTITLEMENTS := Resources/Release.entitlements
-DATA_SOURCES := Sources/UsageData.swift Sources/PricingCatalog.swift Sources/SessionLogInput.swift
+DATA_SOURCES := Sources/UsageData.swift Sources/PricingCatalog.swift Sources/SessionLogInput.swift Sources/AccountResetClient.swift
 NATIVE_LIB := $(BUILD_DIR)/libUsageLogReader.a
 NATIVE_FLAGS := -import-objc-header Sources/UsageLogReader.h
 NATIVE_SOURCES := Sources/UsageLogReader.c Sources/UsageLogReader.h ThirdParty/zstd/zstddeclib.c ThirdParty/zstd/zstd.h ThirdParty/zstd/zstd_errors.h
@@ -118,6 +118,14 @@ run: all
 	open "$(APP)"
 
 .PHONY: benchmark
+.PHONY: verify-account-resets
+verify-account-resets: $(BUILD_DIR)/VerifyAccountResets
+	"$(BUILD_DIR)/VerifyAccountResets"
+
+$(BUILD_DIR)/VerifyAccountResets: $(DATA_SOURCES) Tools/VerifyAccountResets.swift $(NATIVE_LIB)
+	mkdir -p "$(BUILD_DIR)/ModuleCache-account"
+	xcrun swiftc $(NATIVE_FLAGS) -O -target arm64-apple-macosx13.0 -module-cache-path "$(BUILD_DIR)/ModuleCache-account" $(DATA_SOURCES) Tools/VerifyAccountResets.swift -o "$@" -framework SwiftUI -framework Combine $(NATIVE_LIB)
+
 verify-pricing-source: $(BUILD_DIR)/VerifyPricingSource
 	"$(BUILD_DIR)/VerifyPricingSource"
 

@@ -78,7 +78,7 @@ final class UsageHostingController: NSHostingController<RootView>, NSTouchBarDel
     }
 
     @objc private func refreshFromTouchBar() {
-        store.refresh()
+        store.refresh(forceAccountSync: true)
     }
 
     @objc private func windowChanged(_ sender: NSSegmentedControl) {

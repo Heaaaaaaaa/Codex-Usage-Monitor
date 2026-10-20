@@ -88,6 +88,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
     }
 
     func show() {
+        store.refreshAccountResetsIfNeeded()
         wantsPopoverVisible = true
         presentPopoverWhenReady(attempt: 0)
     }
@@ -394,7 +395,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
     }
 
     @objc private func refreshUsage() {
-        store.refresh()
+        store.refresh(forceAccountSync: true)
     }
 
     @objc private func exportCSV() {

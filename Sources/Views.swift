@@ -259,7 +259,7 @@ struct RootView: View {
             Spacer()
             if !showingSettings {
                 HeaderButton(symbol: "arrow.clockwise", help: "Refresh") {
-                    store.refresh()
+                    store.refresh(forceAccountSync: true)
                 }
                 .opacity(store.isRefreshing ? 0.45 : 1)
                 .disabled(store.isRefreshing)
@@ -397,7 +397,7 @@ struct RootView: View {
     private func limitsContent(now: Date) -> some View {
         let snapshot = store.latestLimits
         let windows = snapshot?.reportedWindows ?? []
-        let resetDisplay = UsageStore.resetCreditDisplay(snapshot, now: now)
+        let resetDisplay = store.resetCreditDisplay(now: now)
 
         return VStack(alignment: .leading, spacing: 10) {
             SectionTitle("Account allowance")
@@ -437,7 +437,8 @@ struct RootView: View {
                     color: resetDisplay.isExpired ? AppColor.tertiaryText : AppColor.gold
                 )
             }
-            if let credits = snapshot?.resetCredits, !credits.isEmpty {
+            let credits = store.displayedResetCredits(now: now)
+            if !credits.isEmpty {
                 DisclosureGroup("Reset credit expiry") {
                     VStack(spacing: 7) {
                         ForEach(credits) { credit in
@@ -772,6 +773,40 @@ struct RootView: View {
                     }
                     .labelsHidden()
                     .frame(width: 120)
+                }
+                .padding(.vertical, 12)
+
+                HStack(spacing: 11) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(AppColor.green)
+                        .frame(width: 20, height: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Account reset sync")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AppColor.primaryText)
+                        Text(store.accountResetSyncMessage)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AppColor.tertiaryText)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Button {
+                        store.refreshAccountResetsIfNeeded(force: true)
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!store.accountResetSyncEnabled || store.isUpdatingAccountResets)
+                    .help("Sync reset count and expiry dates now")
+                    .accessibilityLabel("Sync account resets now")
+                    Toggle("Account reset sync", isOn: Binding(get: {
+                        store.accountResetSyncEnabled
+                    }, set: { store.setAccountResetSyncEnabled($0) }))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .help("Read-only account request through the signed-in Codex CLI. No reset is consumed and no local usage logs are sent.")
+                    .accessibilityLabel("Account reset sync")
                 }
                 .padding(.vertical, 12)
             }

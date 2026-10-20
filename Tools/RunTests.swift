@@ -167,7 +167,7 @@ private func buildCodexFixture() throws -> URL {
                     "window_minutes": 10_080,
                     "resets_at": Int(Date().addingTimeInterval(86_400).timeIntervalSince1970)
                 ],
-                "credits": [
+                "rate_limit_reset_credits": [
                     "available": 2,
                     "items": [
                         [
@@ -1290,7 +1290,7 @@ private func testResetCreditDisplay() throws {
     )
     try requireEqual(
         UsageStore.resetCreditDisplay(RateLimitSnapshot(seenAt: now, planType: "pro", primary: nil, secondary: nil, resetCreditsDescription: "No reset credits in latest local snapshot"), now: now),
-        ResetCreditDisplay(value: "None", detail: "No reset credits in latest local snapshot"),
+        ResetCreditDisplay(value: "Unavailable", detail: "Not provided in local logs"),
         "no reset-credit display"
     )
     try requireEqual(
@@ -1326,6 +1326,144 @@ private func testResetCreditDisplay() throws {
 
     try requireEqual(UsageStore.expiryText(nil, now: now), "Expiry unknown", "nil reset-credit expiry")
     try requireEqual(UsageStore.expiryText(now.addingTimeInterval(-1), now: now), "expired", "expired reset-credit expiry")
+}
+
+@MainActor
+private func testCreditBalanceIsNotResetInventory() throws {
+    let home = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let file = home.appendingPathComponent("sessions/reset-balance.jsonl")
+    let creditObjects: [[String: Any]] = [
+        ["has_credits": false, "unlimited": false, "balance": "0"],
+        ["has_credits": true, "unlimited": false, "balance": "99", "available": 99]
+    ]
+    for object in creditObjects {
+        try writeJSONL(file, [tokenEvent(timestamp: isoString(daysAgo: 0), info: [:], limits: ["credits": object])])
+        let store = UsageStore(codexHome: home, preferences: isolatedPreferences())
+        store.loadFromDiskSynchronously()
+        try requireEqual(store.resetCreditDisplay().value, "Unavailable", "balance metadata cannot establish reset count")
+        try requireEqual(store.latestLimits?.resetCredits.count, 0, "balance does not create reset records")
+    }
+    try writeJSONL(file, [tokenEvent(timestamp: isoString(daysAgo: 0), info: [:], limits: ["rateLimitResetCredits": ["availableCount": 0, "credits": []]])])
+    let store = UsageStore(codexHome: home, preferences: isolatedPreferences())
+    store.loadFromDiskSynchronously()
+    try requireEqual(store.resetCreditDisplay().value, "0", "explicit reset inventory zero is not missing data")
+}
+
+private func testAccountResetInventorySchema() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let data = Data(#"{"rateLimitResetCredits":{"availableCount":3,"credits":[{"id":"one","status":"available","title":"Full reset","expiresAt":1800003600},{"id":"one","status":"available","expiresAt":1800003600},{"id":"used","status":"consumed"},{"id":"expired","status":"available","expiresAt":1700000000}]},"rateLimits":{"credits":{"balance":"0","hasCredits":false}}}"#.utf8)
+    let inventory = try AccountResetInventory.decode(data, now: now)
+    try requireEqual(inventory.availableCount, 3, "server count is authoritative even when detail rows are capped")
+    try requireEqual(inventory.credits.count, 1, "filter duplicate, consumed, and already expired rows")
+    try requireEqual(inventory.credits.first?.label, "Full reset", "server reset title")
+    try requireEqual(inventory.remainingCount(now: now.addingTimeInterval(3_601)), 2, "known expiry reduces cached count without losing undisclosed credits")
+    let countOnly = try AccountResetInventory.decode(Data(#"{"rateLimitResetCredits":{"availableCount":3,"credits":null}}"#.utf8), now: now)
+    try requireEqual(countOnly.remainingCount(now: now), 3, "count-only responses supported")
+    try requireEqual(countOnly.credits.count, 0, "null details do not become fake rows")
+    let zero = try AccountResetInventory.decode(Data(#"{"rateLimitResetCredits":{"availableCount":0,"credits":[]}}"#.utf8), now: now)
+    try requireEqual(zero.availableCount, 0, "explicit empty reset inventory")
+    for invalid in [#"{"rateLimitResetCredits":null}"#, #"{"rateLimits":{"credits":{"balance":"0"}}}"#, #"{"rateLimitResetCredits":{"availableCount":-1}}"#, #"{"rateLimitResetCredits":{"availableCount":"3"}}"#] {
+        do {
+            _ = try AccountResetInventory.decode(Data(invalid.utf8), now: now)
+            throw TestFailure(description: "missing or malformed reset inventory accepted")
+        } catch is AccountResetError {}
+    }
+}
+
+@MainActor
+private func testAccountResetSyncAndOfflineState() throws {
+    let preferences = isolatedPreferences()
+    let store = UsageStore(preferences: preferences)
+    let now = Date()
+    let inventory = AccountResetInventory(availableCount: 3, credits: [ResetCredit(id: "one", label: "Full reset", expiresAt: now.addingTimeInterval(100))], fetchedAt: now)
+    try require(!store.accountResetSyncEnabled, "account requests default off")
+    store.refreshAccountResetsIfNeeded(force: true) { _ in throw TestFailure(description: "disabled client was called") }
+    try require(!store.isUpdatingAccountResets, "disabled sync stays idle")
+    store.setAccountResetSyncEnabled(true) { _ in inventory }
+    try require(waitUntil(timeout: 5) { !store.isUpdatingAccountResets }, "reset sync completes")
+    try requireEqual(store.resetCreditDisplay(now: now).value, "3", "account inventory count displayed")
+    try requireEqual(store.displayedResetCredits(now: now).count, 1, "account expiry rows displayed")
+    try requireEqual(store.resetCreditDisplay(now: now.addingTimeInterval(101)).value, "2", "expired cached credit excluded")
+    try require(store.resetCreditDisplay(now: now.addingTimeInterval(901)).isExpired, "old snapshots marked stale")
+    store.refreshAccountResetsIfNeeded(now: now.addingTimeInterval(60)) { _ in throw TestFailure(description: "throttle failed") }
+    try require(!store.isUpdatingAccountResets, "automatic account requests throttled")
+    store.refreshAccountResetsIfNeeded(force: true) { _ in throw AccountResetError.requestFailed }
+    try require(waitUntil(timeout: 5) { !store.isUpdatingAccountResets }, "failed reset sync completes")
+    try requireEqual(store.resetCreditDisplay(now: now).value, "3", "offline sync keeps last good count")
+    try require(store.resetCreditDisplay(now: now).detail.hasPrefix("Saved /"), "failed sync is not presented as live")
+    let reloaded = UsageStore(preferences: preferences)
+    try require(reloaded.accountResetSyncEnabled, "opt-in setting persisted")
+    try require(reloaded.accountResetInventory == nil, "account inventory not persisted with preferences")
+    store.setAccountResetSyncEnabled(false)
+    try require(store.accountResetInventory == nil, "disabling clears account data")
+}
+
+@MainActor
+private func testResetSyncRejectsObsoleteResults() throws {
+    let home = try makeTemporaryCodexHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let store = UsageStore(preferences: isolatedPreferences())
+    let finished = DispatchSemaphore(value: 0)
+    store.setAccountResetSyncEnabled(true) { _ in
+        try await Task.sleep(nanoseconds: 50_000_000)
+        finished.signal()
+        return AccountResetInventory(availableCount: 9, credits: [], fetchedAt: Date())
+    }
+    store.setCodexHome(home)
+    try require(waitUntil(timeout: 5) { finished.wait(timeout: .now()) == .success }, "obsolete request finished")
+    _ = waitUntil(timeout: 0.1) { store.accountResetInventory != nil }
+    try require(store.accountResetInventory == nil, "different Codex home cannot inherit old account reset inventory")
+    store.setAccountResetSyncEnabled(false)
+}
+
+private func fakeResetCLI(_ directory: URL, script: String) throws -> URL {
+    let url = directory.appendingPathComponent("fake codex")
+    try ("#!/bin/sh\n" + script).write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+    return url
+}
+
+private func testResetCLIReadOnlyHandshake() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let cli = try fakeResetCLI(folder, script: #"""
+    IFS= read -r first
+    case "$first" in *'"initialize"'*) ;; *) exit 1 ;; esac
+    printf '%s\n' '{"id":1,"result":{}}'
+    IFS= read -r ready
+    case "$ready" in *'"initialized"'*) ;; *) exit 1 ;; esac
+    IFS= read -r request
+    case "$request" in *'"account\/rateLimits\/read"'*|*'"account/rateLimits/read"'*) ;; *) exit 1 ;; esac
+    printf '%s\n' '{"method":"account/rateLimits/updated","params":{}}'
+    printf '%s\n' '{"id":2,"result":{"rateLimitResetCredits":{"availableCount":3,"credits":null}}}'
+    """#)
+    let result = try AccountResetClient.read(executable: cli, codexHome: folder, timeout: 3)
+    try requireEqual(result.availableCount, 3, "JSON-RPC handshake obtains actual reset inventory")
+}
+
+private func testResetCLITimeoutAndCorruptOutput() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let timeoutCLI = try fakeResetCLI(folder, script: "while IFS= read -r line; do :; done\n")
+    let start = Date()
+    do {
+        _ = try AccountResetClient.read(executable: timeoutCLI, codexHome: folder, timeout: 0.1)
+        throw TestFailure(description: "nonresponsive CLI did not time out")
+    } catch AccountResetError.timedOut {}
+    try require(Date().timeIntervalSince(start) < 3, "timeout cleanup bounded")
+    let corruptCLI = try fakeResetCLI(folder, script: "printf 'not-json\\n'\n")
+    do {
+        _ = try AccountResetClient.read(executable: corruptCLI, codexHome: folder, timeout: 1)
+        throw TestFailure(description: "malformed CLI output accepted")
+    } catch is AccountResetError {}
+    let exitedCLI = try fakeResetCLI(folder, script: "exit 0\n")
+    do {
+        _ = try AccountResetClient.read(executable: exitedCLI, codexHome: folder, timeout: 1)
+        throw TestFailure(description: "exited CLI accepted")
+    } catch is AccountResetError {}
 }
 
 @MainActor
@@ -2270,7 +2408,7 @@ private func testCodexJSONLParsing() throws {
     try require(store.chatRows.contains { $0.label == "Parser fixture" }, "parser session index title")
     try require(store.chatRows.contains { $0.label == "Archived parser fixture" }, "parser archived title")
     try requireEqual(store.latestLimits?.planType, "pro", "parser rate limit plan")
-    try requireEqual(store.latestLimits?.resetCreditsDescription, "2 reset credits with expiry", "parser reset credits")
+    try requireEqual(store.latestLimits?.resetCreditsDescription, "2 reset credits available", "parser reset credits")
     try requireEqual(store.latestLimits?.resetCredits.count, 2, "parser reset-credit expiry count")
     try requireEqual(store.latestLimits?.resetCredits.first?.label, "Reset Credit 1", "parser reset-credit label")
     try require(store.latestLimits?.resetCredits.first?.expiresAt != nil, "parser reset-credit expiry date")
@@ -2682,6 +2820,12 @@ private struct RunTests {
             ("startup refresh guard", testRefreshGuardPreventsDuplicateStartupScan),
             ("scan source consistency", testChangingCodexHomeRejectsStaleScanResults),
             ("reset-credit display", testResetCreditDisplay),
+            ("credit balance is not reset inventory", testCreditBalanceIsNotResetInventory),
+            ("account reset inventory schema", testAccountResetInventorySchema),
+            ("account reset opt-in and offline state", testAccountResetSyncAndOfflineState),
+            ("obsolete account reset responses", testResetSyncRejectsObsoleteResults),
+            ("read-only reset CLI handshake", testResetCLIReadOnlyHandshake),
+            ("reset CLI timeout and corrupt output", testResetCLITimeoutAndCorruptOutput),
             ("window limit expiry display", testWindowLimitExpiryDisplay),
             ("rate-limit window classification", testRateLimitWindowClassification),
             ("rate-limit snapshot selection", testRateLimitSnapshotSelectionRejectsSyntheticSlidingZero),

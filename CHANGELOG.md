@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.4 - 2026-10-20
+
+- Add opt-in, read-only account reset sync through the installed Codex CLI's official `account/rateLimits/read` interface. Show the authoritative available count and individual expiry dates, independently of credit balances.
+- Refresh account resets at most every five minutes automatically, with manual refresh, bounded process cleanup, visible sync status, and clearly marked saved values after a failed request.
+- Never consume resets, start chats, initiate sign-in, or read authentication files directly. Account sync is off by default, and reset inventory is kept in memory only.
+- Stop interpreting generic `credits`, `balance`, or `has_credits` fields as reset inventory. Missing local reset information now shows Unavailable rather than Reported or a false zero.
+- Rebuild old parsed-log caches and add regression coverage for capped detail lists, expiry, offline states, source changes, malformed responses, timeouts, and the read-only protocol handshake.
+
 ## 0.5.3 - 2026-10-19
 
 - Read historical `.jsonl.zst` rollouts using a bundled Zstandard decoder on Apple silicon and Intel, without Homebrew or extracting logs to disk.

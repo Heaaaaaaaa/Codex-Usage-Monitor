@@ -79,7 +79,7 @@ def rate_limits(now: datetime) -> dict:
             "window_minutes": 10_080,
             "resets_at": unix(timedelta(days=4, hours=6)),
         },
-        "credits": {
+        "rate_limit_reset_credits": {
             "available": 3,
             "items": [
                 {"id": "demo-reset-1", "label": "Reset Credit 1", "expires_at": unix(timedelta(days=12, hours=4))},

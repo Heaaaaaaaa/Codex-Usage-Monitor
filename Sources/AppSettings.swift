@@ -584,7 +584,8 @@ final class AppSettings: ObservableObject {
             "[Privacy]",
             "Reads selected local Codex log folder only.",
             "Sources: sessions, archived_sessions, session_index",
-            "Auth files: not read",
+            "Auth files: not read by monitor; optional account sync delegates sign-in to Codex CLI",
+            "Account reset sync: \(store.accountResetSyncEnabled ? "enabled" : "disabled") (read only)",
             "",
             "[Machine Summary]",
             store.diagnosticSummary
