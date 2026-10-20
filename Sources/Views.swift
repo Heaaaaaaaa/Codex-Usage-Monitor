@@ -635,6 +635,15 @@ struct RootView: View {
 
                     Spacer()
 
+                    Button {
+                        appSettings.openLoginItemSettings()
+                    } label: {
+                        Image(systemName: "arrow.up.forward.square")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open Login Items in System Settings")
+                    .accessibilityLabel("Open Login Items in System Settings")
+
                     Toggle("", isOn: Binding(get: {
                         appSettings.launchAtLoginEnabled
                     }, set: { newValue in

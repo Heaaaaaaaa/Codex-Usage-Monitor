@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ServiceManagement
 
 private struct TestFailure: Error, CustomStringConvertible {
     let description: String
@@ -2777,6 +2778,79 @@ private func testGPT61MigrationAndEstimate() throws {
     try requireEqual(store.pricingCoverage.percentText, "100%", "GPT-6.1 priced completely")
 }
 
+@MainActor
+private func testLoginItemRegistrationRecovery() throws {
+    var status = SMAppService.Status.notFound
+    var registrations = 0
+    var removals = 0
+    let settings = AppSettings(preferences: isolatedPreferences(), loginItemClient: LoginItemClient(
+        status: { status },
+        register: { registrations += 1; status = .enabled },
+        unregister: { removals += 1; status = .notRegistered },
+        openSettings: {}
+    ))
+    try require(settings.launchAtLoginCanToggle, "notFound must not permanently disable registration")
+    try require(!settings.launchAtLoginDetail.contains("Applications"), "service lookup failure does not imply an installation path")
+    settings.setLaunchAtLogin(true)
+    try requireEqual(registrations, 1, "retry registers a missing service")
+    try require(settings.launchAtLoginEnabled, "successful registration reads enabled state")
+    settings.setLaunchAtLogin(true)
+    try requireEqual(registrations, 1, "enabled service is not registered twice")
+    settings.toggleLaunchAtLogin()
+    try requireEqual(removals, 1, "off unregisters the login item")
+    try require(!settings.launchAtLoginEnabled, "successful removal reads off state")
+    settings.setLaunchAtLogin(false)
+    try requireEqual(removals, 1, "already unregistered service is left alone")
+}
+
+@MainActor
+private func testLoginItemApprovalAndExternalChanges() throws {
+    var status = SMAppService.Status.notRegistered
+    var registrations = 0
+    var removals = 0
+    var settingsOpens = 0
+    let settings = AppSettings(preferences: isolatedPreferences(), loginItemClient: LoginItemClient(
+        status: { status },
+        register: { registrations += 1; status = .requiresApproval },
+        unregister: { removals += 1; status = .notRegistered },
+        openSettings: { settingsOpens += 1 }
+    ))
+    settings.setLaunchAtLogin(true)
+    try require(settings.launchAtLoginEnabled, "pending registration remains requested and can be switched off")
+    try require(settings.launchAtLoginDetail.contains("approval"), "pending state is not presented as active")
+    try requireEqual(settingsOpens, 1, "registration requiring approval opens Apple's Login Items panel")
+    settings.setLaunchAtLogin(true)
+    try requireEqual(registrations, 1, "pending service is not repeatedly registered")
+    try requireEqual(settingsOpens, 2, "pending request can reopen approval settings")
+    settings.toggleLaunchAtLogin()
+    try requireEqual(removals, 1, "pending registration can be cancelled")
+    status = .enabled
+    settings.refreshLaunchAtLoginStatus()
+    try require(settings.launchAtLoginEnabled, "external approval is observed")
+    status = .notRegistered
+    settings.refreshLaunchAtLoginStatus()
+    try require(!settings.launchAtLoginEnabled, "external removal is observed")
+    settings.openLoginItemSettings()
+    try requireEqual(settingsOpens, 3, "manual Login Items shortcut uses system API")
+}
+
+@MainActor
+private func testLoginItemFailuresPreserveSystemState() throws {
+    var status = SMAppService.Status.notFound
+    let error = NSError(domain: "LoginItemTest", code: 42, userInfo: [NSLocalizedDescriptionKey: "Registration failed"])
+    let settings = AppSettings(preferences: isolatedPreferences(), loginItemClient: LoginItemClient(
+        status: { status }, register: { throw error }, unregister: { throw error }, openSettings: {}
+    ))
+    settings.setLaunchAtLogin(true)
+    try require(!settings.launchAtLoginEnabled, "failed registration never reports enabled")
+    try require(settings.launchAtLoginCanToggle, "failed registration remains retryable")
+    try require(settings.launchAtLoginDetail.contains("LoginItemTest 42"), "failure retains actionable system error")
+    status = .enabled
+    settings.setLaunchAtLogin(false)
+    try require(settings.launchAtLoginEnabled, "failed removal keeps actual enabled state")
+    try require(settings.launchAtLoginDetail.contains("Registration failed"), "failed removal remains visible")
+}
+
 @main
 private struct RunTests {
     @MainActor
@@ -2830,6 +2904,9 @@ private struct RunTests {
             ("rate-limit window classification", testRateLimitWindowClassification),
             ("rate-limit snapshot selection", testRateLimitSnapshotSelectionRejectsSyntheticSlidingZero),
             ("app startup preference", testAppSettingsPersistStartupPreference),
+            ("login item registration recovery", testLoginItemRegistrationRecovery),
+            ("login item approval and external changes", testLoginItemApprovalAndExternalChanges),
+            ("login item failure state", testLoginItemFailuresPreserveSystemState),
             ("budget settings", testBudgetSettingsAndStatus),
             ("settings import export", testSettingsConfigurationImportExport),
             ("status menu snapshot", testStatusMenuSnapshotLines),

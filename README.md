@@ -14,9 +14,11 @@ A native macOS menu-bar app for tracking local Codex tokens and estimated API co
 
 Requires **macOS 13 or later**, on Apple silicon or Intel.
 
-1. Download [CodexUsageMonitor-0.5.4.dmg](https://github.com/Heaaaaaaaa/Codex-Usage-Monitor/releases/download/v0.5.4/CodexUsageMonitor-0.5.4.dmg).
+1. Download [CodexUsageMonitor-0.5.5.dmg](https://github.com/Heaaaaaaaa/Codex-Usage-Monitor/releases/download/v0.5.5/CodexUsageMonitor-0.5.5.dmg).
 2. Open the DMG and drag the app into **Applications**.
 3. Launch it, then click its menu-bar icon. Logs are read from `~/.codex` by default; change the folder in Settings if needed.
+
+Enable **Settings > General > Launch at login** to start automatically. The adjacent arrow opens macOS Login Items for approval or management.
 
 **Signing:** Community builds are ad-hoc signed, not Developer ID signed or notarized. macOS may block the first launch with an unidentified-developer warning. Only open a download you trust; signing details and checksums are included with each release.
 

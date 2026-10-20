@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.5 - 2026-10-20
+
+- Fix Launch at login being disabled when macOS reports an unregistered service as Not Found, even with the app already installed in Applications. Allow registration to be retried instead of claiming the app needs to be moved.
+- Keep pending login registration cancellable, open macOS Login Items when approval is needed, and add a direct Login Items shortcut in General settings.
+- Refresh login status when reopening or activating the app, and retain system error details when registration or removal fails.
+- Add isolated regression tests for registration recovery, repeated requests, approval, cancellation, external changes, and failure states. Verify the installed app can register and unregister in macOS Login Items.
+
 ## 0.5.4 - 2026-10-20
 
 - Add opt-in, read-only account reset sync through the installed Codex CLI's official `account/rateLimits/read` interface. Show the authoritative available count and individual expiry dates, independently of credit balances.

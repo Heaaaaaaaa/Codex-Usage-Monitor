@@ -233,6 +233,23 @@ struct AppConfiguration: Codable, Equatable {
 }
 
 @MainActor
+struct LoginItemClient {
+    var status: () -> SMAppService.Status
+    var register: () throws -> Void
+    var unregister: () throws -> Void
+    var openSettings: () -> Void
+
+    static var system: Self {
+        Self(
+            status: { SMAppService.mainApp.status },
+            register: { try SMAppService.mainApp.register() },
+            unregister: { try SMAppService.mainApp.unregister() },
+            openSettings: { SMAppService.openSystemSettingsLoginItems() }
+        )
+    }
+}
+
+@MainActor
 final class AppSettings: ObservableObject {
     @Published private(set) var launchAtLoginEnabled = false
     @Published private(set) var launchAtLoginCanToggle = true
@@ -246,12 +263,15 @@ final class AppSettings: ObservableObject {
     @Published private(set) var costBudgetLimit: Double = 0
 
     private let preferences: UserDefaults
+    private let loginItemClient: LoginItemClient
 
     init(
         preferences: UserDefaults = .standard,
-        refreshLoginStatus: Bool = true
+        refreshLoginStatus: Bool = true,
+        loginItemClient: LoginItemClient? = nil
     ) {
         self.preferences = preferences
+        self.loginItemClient = loginItemClient ?? .system
         self.showWindowOnLaunch = Self.loadShowWindowOnLaunch(preferences: preferences)
         self.menuBarDisplayMode = Self.loadMenuBarDisplayMode(preferences: preferences)
         self.trendMetric = Self.loadTrendMetric(preferences: preferences)
@@ -265,19 +285,20 @@ final class AppSettings: ObservableObject {
     }
 
     func refreshLaunchAtLoginStatus() {
-        switch SMAppService.mainApp.status {
+        switch loginItemClient.status() {
         case .enabled:
             launchAtLoginEnabled = true
             launchAtLoginCanToggle = true
             launchAtLoginDetail = "Starts automatically when you sign in"
         case .requiresApproval:
-            launchAtLoginEnabled = false
+            launchAtLoginEnabled = true
             launchAtLoginCanToggle = true
             launchAtLoginDetail = "Waiting for approval in System Settings"
         case .notFound:
+            // A missing service may simply never have been registered.
             launchAtLoginEnabled = false
-            launchAtLoginCanToggle = false
-            launchAtLoginDetail = "Move the app to Applications to enable"
+            launchAtLoginCanToggle = true
+            launchAtLoginDetail = "Not registered. Turn on to retry"
         case .notRegistered:
             launchAtLoginEnabled = false
             launchAtLoginCanToggle = true
@@ -291,22 +312,35 @@ final class AppSettings: ObservableObject {
 
     func setLaunchAtLogin(_ enabled: Bool) {
         do {
-            let service = SMAppService.mainApp
-            switch (enabled, service.status) {
+            switch (enabled, loginItemClient.status()) {
             case (true, .enabled):
                 break
+            case (true, .requiresApproval):
+                openLoginItemSettings()
             case (true, _):
-                try service.register()
-            case (false, .enabled), (false, .requiresApproval):
-                try service.unregister()
+                try loginItemClient.register()
+                if loginItemClient.status() == .requiresApproval {
+                    openLoginItemSettings()
+                }
+            case (false, .enabled), (false, .requiresApproval), (false, .notFound):
+                try loginItemClient.unregister()
             case (false, _):
                 break
             }
             refreshLaunchAtLoginStatus()
         } catch {
             refreshLaunchAtLoginStatus()
-            launchAtLoginDetail = "Could not update: \(error.localizedDescription)"
+            if loginItemClient.status() == .requiresApproval {
+                if enabled { openLoginItemSettings() }
+            } else {
+                let error = error as NSError
+                launchAtLoginDetail = "Could not update: \(error.localizedDescription) (\(error.domain) \(error.code))"
+            }
         }
+    }
+
+    func openLoginItemSettings() {
+        loginItemClient.openSettings()
     }
 
     func toggleLaunchAtLogin() {
@@ -553,6 +587,7 @@ final class AppSettings: ObservableObject {
             "Trend metric: \(trendMetric.rawValue)",
             "Auto refresh: \(autoRefreshInterval.rawValue)",
             "Popover on launch: \(showWindowOnLaunch ? "On" : "Off")",
+            "Launch at login: \(launchAtLoginDetail)",
             "",
             "[Budgets]",
             "Token: \(tokenBudget.value) - \(tokenBudget.detail)",

@@ -88,6 +88,7 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
     }
 
     func show() {
+        appSettings.refreshLaunchAtLoginStatus()
         store.refreshAccountResetsIfNeeded()
         wantsPopoverVisible = true
         presentPopoverWhenReady(attempt: 0)
@@ -480,6 +481,10 @@ final class Launcher: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSP
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        appSettings.refreshLaunchAtLoginStatus()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
